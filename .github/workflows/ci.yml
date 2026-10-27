@@ -1,9 +1,10 @@
 name: CI
 
-# Work happens on develop; main only changes through pull requests that pass this check.
+# Work happens on develop; main only changes through pull requests that pass this check, and is
+# checked again after each merge (that is the status the README badge shows).
 on:
   push:
-    branches: [develop]
+    branches: [develop, main]
     # The website (docs/) and Markdown files need no tests.
     paths-ignore: ["docs/**", "**.md"]
   # Always runs on pull requests, so the required check is never left waiting.
