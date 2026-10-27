@@ -1,4 +1,4 @@
-name: CI
+name: Builds
 
 # develop gets the full check ("test": every test plus a release build). It is the gate: main only
 # changes through pull requests from develop, whose latest commit must carry a passing "test".

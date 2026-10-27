@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nicoborghi/agora/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/ci.yml?branch=main&label=CI&logo=github&logoColor=white" alt="CI"></a>
+  <a href="https://github.com/nicoborghi/agora/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/ci.yml?branch=main&label=Builds&logo=github&logoColor=white" alt="Builds"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/v/release/nicoborghi/agora?include_prereleases&label=release&color=7c5cff" alt="Release"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/downloads/nicoborghi/agora/total?color=2f80ed" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white" alt="Windows 10 | 11">
