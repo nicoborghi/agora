@@ -29,15 +29,12 @@
 Agora is not a wrapper that stacks web apps in different tabs. It talks to each service through its API, turns everything into one data model, and provides new features:
 
 - **One Home for everything.** Workspace cards with new messages and mentions. *All conversations* from every workspace in one sidebar.
-- **Search across every service at once**, even offline: the local archive is indexed, and *Search on the server* reaches back further (depending on the service).
+- **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
 - **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
 - **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it.
-- **Your history stays with you.** Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager), searchable and readable without a connection.
 - **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), and a preview of what others will see.
-- **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service:
-  about 100 MB of memory with several workspaces, no framework, no per-service browser.
-- **Made to be yours.** Light, dark or system theme, accent colours, three text sizes, compact or wide spacing,
-  Lato or Windows fonts.
+- **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
+
 
 ## Supported chat systems
 

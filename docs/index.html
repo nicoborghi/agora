@@ -98,27 +98,21 @@
 
   <section class="wrap">
     <h2>More than three apps in one window</h2>
-    <p class="lead">Agora is not a wrapper that stacks web apps in tabs. It talks to each service through its API and
-      builds what no official client has: features that work across all your workspaces.</p>
+    <p class="lead">Agora is not a wrapper that stacks web apps in different tabs. It talks to each service through its
+      API, turns everything into one data model, and provides new features:</p>
     <div class="grid">
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg></div>
-        <h3>One Home for everything</h3><p>A card per workspace, in its own colour, with what is new and who mentioned you. <i>All conversations</i> puts every workspace in one sidebar.</p></div>
+        <h3>One Home for everything</h3><p>Workspace cards with new messages and mentions. <i>All conversations</i> from every workspace in one sidebar.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg></div>
-        <h3>Search across services</h3><p>Every service at once, even offline, from the local archive; ask the servers for older history. <code>from:</code>, <code>in:</code>, phrases and a date filter work everywhere.</p></div>
+        <h3>Your history, searchable across every service</h3><p>Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. <i>Search on the server</i> reaches back further (depending on the service).</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
-        <h3>Fine-tunable notifications</h3><p>Alert, Dot or Silent, set globally, per workspace and per conversation. Mentions and keywords break through; quiet hours hold the rest.</p></div>
+        <h3>Fine-tunable notifications</h3><p>Three levels (Alert, Dot, Silent) set in layers: a default for direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h7l2 2h7v10H4z"/><path d="M4 7V5h6l2 2"/></svg></div>
-        <h3>Organise across workspaces</h3><p>Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it.</p></div>
-      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div>
-        <h3>Your history, encrypted</h3><p>Every message received is kept in a local SQLCipher archive, its key in Windows Credential Manager. Readable and searchable without a connection.</p></div>
-      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/></svg></div>
-        <h3>People, wherever they are</h3><p>Profiles with title, local time, status and contacts; member lists; click any @mention or #channel to open it.</p></div>
+        <h3>Organise across services</h3><p>Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m13.5 7.5 3 3"/></svg></div>
-        <h3>Writing that feels good</h3><p>Markdown toolbar and shortcuts, @mention and :emoji: completion, pasted images with a built-in editor, and a preview of what others will see.</p></div>
+        <h3>Unified writing experience</h3><p>Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), and a preview of what others will see.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6z"/></svg></div>
-        <h3>Light on your PC</h3><p>One native shell (Rust and Tauri on WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces.</p></div>
-      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/></svg></div>
-        <h3>Made to be yours</h3><p>Light, dark or system theme, eight accent colours, three text sizes, compact or wide spacing, Lato or Windows fonts.</p></div>
+        <h3>Light on your PC</h3><p>One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.</p></div>
     </div>
   </section>
 
