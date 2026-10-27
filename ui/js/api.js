@@ -33,7 +33,8 @@ export function toast(text, ms = 2500) {
 const PATHS = {
   star: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/>',
   bell: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/>',
-  bellOff: '<path d="M4 11V7a4 4 0 0 1 6.2-3.3M12 7v4l1.2 1.5H5.5"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
+  // The bell above with one clean slash across it.
+  bellOff: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/><path d="M2.6 2.4 13.4 13.6"/>',
   image: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M14 11l-3.5-3.5L4 13"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   // Same weight as home/grid: a plain ring with eight short, rounded teeth and a hub.

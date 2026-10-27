@@ -273,8 +273,14 @@ async function reloadOpen() {
 // ------------------------------------------------------------ rail
 
 RENDER.rail = function renderRail() {
+  // Same rule as the tray: conversations with notifications off (Silent) add no dot, unless
+  // someone mentioned you and mentions override levels.
   const unread = new Set();
-  for (const c of S.channels.values()) if (c.unread > 0 || c.mentions > 0) unread.add(c.account_id);
+  const mentionsBreakThrough = S.settings?.notifications?.mentions_override !== false;
+  for (const c of S.channels.values()) {
+    const news = c.unread > 0 || c.mentions > 0;
+    if (news && (!c.muted || (c.mentions > 0 && mentionsBreakThrough))) unread.add(c.account_id);
+  }
   const inSettings = settingsOpen();
   const on = (id) => (!inSettings && S.rail === id ? 'active' : '');
   let html = `<div class="rail-item home ${on('home')}" data-id="home" title="Home (Ctrl+0)">${icon('grid')}<span class="num">0</span></div>
@@ -423,8 +429,10 @@ export function inkFor(hex) {
 function badgeHtml(c) {
   const color = account(c.account_id)?.color || '';
   const style = color ? ` style="--c:${esc(color)};--cf:${inkFor(color)}"` : '';
-  if (c.mentions > 0) return `<span class="badge mention"${style} title="${c.mentions} mention${c.mentions === 1 ? '' : 's'}">${count(c.mentions)}</span>`;
-  if (isDirect(c) && c.unread > 0) return `<span class="badge mention"${style}>${count(c.unread)}</span>`;
+  // Notifications off: only a mention can still show (when mentions override levels).
+  const mentionsShow = !c.muted || S.settings?.notifications?.mentions_override !== false;
+  if (c.mentions > 0 && mentionsShow) return `<span class="badge mention"${style} title="${c.mentions} mention${c.mentions === 1 ? '' : 's'}">${count(c.mentions)}</span>`;
+  if (isDirect(c) && c.unread > 0 && !c.muted) return `<span class="badge mention"${style}>${count(c.unread)}</span>`;
   return '';
 }
 
