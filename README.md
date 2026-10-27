@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nicoborghi/agora/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/ci.yml?branch=main&label=Builds&logo=github&logoColor=white" alt="Builds"></a>
+  <a href="https://github.com/nicoborghi/agora/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/release.yml?label=Release%20build&logo=github&logoColor=white" alt="Release build"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/v/release/nicoborghi/agora?include_prereleases&label=release&color=7c5cff" alt="Release"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/downloads/nicoborghi/agora/total?color=2f80ed" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white" alt="Windows 10 | 11">
@@ -51,17 +51,26 @@ Get the installer from the [latest release](https://github.com/nicoborghi/agora/
 only (no administrator rights) and needs Windows 10 or 11 with the WebView2 runtime (included in Windows 11).
 Then open Settings → Accounts and sign in.
 
-Releases are built automatically: pushing a version tag runs [GitHub Actions](.github/workflows/release.yml), which
-compiles Agora, packages the installer and publishes the release; every push to `main` runs the tests
-([CI](.github/workflows/ci.yml)).
+**Updates install themselves.** Agora checks for a new version shortly after it starts and every few hours. When
+one is out, a small bar above your name offers *Update and restart*; Settings → Advanced has *Check for updates*.
+Updates are signed, and Agora accepts only installers signed with its own key. Your accounts, archive and settings
+are kept.
+
+Releases are built only from version tags. To publish one, raise `version` in `src-tauri/tauri.conf.json` and
+the workspace `Cargo.toml`, commit, and push the matching tag. [One workflow](.github/workflows/release.yml) runs the
+tests, then builds, signs and publishes the installer and the `latest.json` that installed copies read. The release
+appears only if all of that succeeds; ordinary pushes run nothing.
 
 ```bash
-git tag v0.1.0-beta.1
+git tag v0.1.1
 ```
 
 ```bash
-git push origin v0.1.0-beta.1
+git push origin v0.1.1
 ```
+
+The signing key's private half lives outside the repository (`~/.tauri/agora.key`) and in the repository secret
+`TAURI_SIGNING_PRIVATE_KEY`; the public half is in `tauri.conf.json`.
 
 # Signing in
 
@@ -243,9 +252,9 @@ Possible later option: unload the main webview when Agora sits in the tray for a
 
 Done: the common core and archive, the Demo workspace, the Mattermost, Rocket.Chat and Slack connectors, Home,
 cross-service search with dates, notification levels and quiet hours, groups, profiles and members, the image
-editor, themes and accent colours, automated releases.
+editor, themes and accent colours, automated releases, signed self-updates, bookmarks, drafts.
 
-Next: signed auto-update (the release workflow is ready for the signing key), start with Windows, single instance,
+Next: start with Windows, single instance,
 an image cache with a size limit, custom emoji. Mac and Linux builds are possible (Tauri runs there) but not
 planned for the beta.
 

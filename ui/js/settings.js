@@ -1,7 +1,7 @@
 // Settings screen. Inputs carry `data-path` (a dotted path into S.settings) and
 // are saved automatically; everything else is handled by `data-act`.
 import { invoke, esc, initials, toast, icon } from './api.js';
-import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth } from './app.js';
+import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate } from './app.js';
 
 const SECTIONS = [
   ['accounts', 'Accounts', 'people'],
@@ -287,8 +287,12 @@ const VIEWS = {
   advanced: () => `<h2>Advanced</h2>
     ${opt('Start with Windows', 'Off by default.', toggle('autostart'))}
     <h3>Updates</h3>
-    ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Works with a private or public repository.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}
-    <p class="muted">Signed auto-update and the startup entry are wired up in the packaging step.</p>
+    ${opt(`Agora ${esc(S.settings.version)}`, S.update.available
+      ? `Version ${esc(S.update.available.version)} is available.`
+      : S.update.checking ? 'Checking...' : S.update.error ? esc(S.update.error) : S.update.checked ? 'You have the latest version.' : 'Agora checks for updates by itself, at start and every few hours.',
+      S.update.available ? '<button class="btn primary" data-act="install-update">Update and restart</button>'
+        : `<button class="btn" data-act="check-update" ${S.update.checking ? 'disabled' : ''}>Check for updates</button>`)}
+    ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Updates are signed: only installers signed with Agora\'s key are accepted.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}
     <h3>Build</h3>
     ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
     ${opt('Version', esc(S.settings.version), '')}`,
@@ -482,6 +486,13 @@ function bind(ov) {
         } catch (err) { toast(String(err)); }
         break;
       }
+      case 'check-update':
+        checkForUpdate(true).then(render);
+        render();
+        break;
+      case 'install-update':
+        installUpdate();
+        break;
       case 'kw-add': {
         const input = document.getElementById('kw-new');
         const word = input.value.trim().toLowerCase(); // matching ignores case anyway (text::contains_word)

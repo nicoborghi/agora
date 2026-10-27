@@ -1,8 +1,11 @@
 name: Release
 
-# Tag a commit on main to publish a release with the Windows installer:
-#   git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1
-# Tags with a hyphen (v0.1.0-beta.1) are marked as pre-releases.
+# The only workflow: nothing runs on ordinary pushes. Tag a commit on main to release it:
+# the tests run first, then the build; the release is created at the very end, so it appears
+# (and installed copies are offered it) only if everything succeeded.
+#   git tag v0.1.1 && git push origin v0.1.1
+# The tag must match "version" in tauri.conf.json. Releases are never marked as pre-releases:
+# GitHub's "latest" link skips those, and installed copies find updates through it. (0.x = beta.)
 on:
   push:
     tags: ['v*']
@@ -23,11 +26,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: ilammy/setup-nasm@v1
       - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Build, sign and publish
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # For signed auto-updates later: add these two repository secrets and set
-          # bundle.createUpdaterArtifacts in tauri.conf.json; latest.json is then published too.
+          # Signs the installer for self-updates (secret: the content of ~/.tauri/agora.key).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -37,5 +42,6 @@ jobs:
             Windows installer below (per-user install, no admin rights needed).
             See the README for what is new and how to sign in to your workspaces.
           releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: false
+          # latest.json: what installed copies read to find, download and verify the update.
           includeUpdaterJson: true

@@ -181,6 +181,37 @@ pub async fn search_messages(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current: String,
+    pub notes: Option<String>,
+}
+
+/// Asks the update feed (Settings → Advanced, a GitHub release's latest.json) for a newer,
+/// signed version. Remembers it so `install_update` can install it; `None` when up to date.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
+    use tauri_plugin_updater::UpdaterExt;
+    let mut builder = app.updater_builder();
+    if let Ok(url) = state.engine.settings().update_url.parse::<tauri::Url>() {
+        builder = builder.endpoints(vec![url]).map_err(err)?;
+    }
+    let update = builder.build().map_err(err)?.check().await.map_err(err)?;
+    let info = update.as_ref().map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() });
+    *state.update.lock().unwrap_or_else(|e| e.into_inner()) = update;
+    Ok(info)
+}
+
+/// Downloads the update found by `check_update`, checks its signature, runs the installer and
+/// restarts Agora. Settings, archive and sign-ins are outside the program folder and stay.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let update = state.update.lock().unwrap_or_else(|e| e.into_inner()).take().ok_or("No update to install")?;
+    update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
+    app.restart()
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_bookmarks(state: State<'_, AppState>) -> CmdResult<Vec<MessageView>> {
     state.engine.bookmarks()

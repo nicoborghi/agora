@@ -14,6 +14,8 @@ agora-mattermost = { path = "../crates/agora-mattermost" }
 agora-rocketchat = { path = "../crates/agora-rocketchat" }
 agora-slack = { path = "../crates/agora-slack" }
 tauri = { version = "2", features = ["tray-icon"] }
+# Signed self-update from the GitHub releases (latest.json); checked by commands::check_update.
+tauri-plugin-updater = "2"
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -32,6 +32,7 @@ export const S = {
   bookmarks: new Set(), // bkey() of bookmarked messages
   bookmarkList: [], // the bookmarked messages, newest bookmark first
   drafts: {}, // key(a, c) -> unsent text
+  update: { available: null, checking: false, checked: false, error: '' }, // self-update state
 };
 
 const key = (a, c) => `${a}\u0001${c}`;
@@ -81,6 +82,9 @@ async function init() {
   await listen('agora', onEvent);
   S.drafts = load('drafts') || {};
   loadBookmarks();
+  // Updates: a quiet check shortly after start, then every 6 hours.
+  setTimeout(() => checkForUpdate(false), 20e3);
+  setInterval(() => checkForUpdate(false), 6 * 3600e3);
   await listen('agora-sound', playSound);
   await listen('agora-open', (p) => openChannel(p.account_id, p.channel_id));
   bindUi();
@@ -710,6 +714,49 @@ RENDER.home = function renderHome() {
   clearTimeout(homeTimer);
   homeTimer = setTimeout(loadHome, 200);
 };
+
+// ------------------------------------------------------------ updates
+
+/** Asks for a newer signed version. `manual`: from Settings, so errors are shown. */
+export async function checkForUpdate(manual) {
+  if (S.update.checking) return;
+  Object.assign(S.update, { checking: true, error: '' });
+  try {
+    S.update.available = await invoke('check_update');
+    S.update.checked = true;
+  } catch (e) {
+    // Offline or no release yet: quiet unless asked for.
+    S.update.error = manual ? `Could not check: ${e}` : '';
+  }
+  S.update.checking = false;
+  renderUpdateBar();
+}
+
+export async function installUpdate() {
+  const u = S.update.available;
+  if (!u) return;
+  toast(`Downloading Agora ${u.version}... Agora restarts when it is installed.`, 8000);
+  try {
+    await invoke('install_update');
+  } catch (e) {
+    toast(String(e), 6000);
+  }
+}
+
+/** A small bar above your name when a newer version is ready to install. */
+function renderUpdateBar() {
+  let bar = $('#update-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'update-bar';
+    $('#me-bar').before(bar);
+    bar.addEventListener('click', (e) => { if (e.target.closest('[data-act="install-update"]')) installUpdate(); });
+  }
+  const u = S.update.available;
+  bar.hidden = !u;
+  bar.innerHTML = u ? `<span>Agora ${esc(u.version)} is available</span>
+    <button data-act="install-update">Update and restart</button>` : '';
+}
 
 // ------------------------------------------------------------ bookmarks
 

@@ -756,3 +756,10 @@ input[type="range"] { accent-color: var(--accent); }
 .bm-msg .msg { padding-top: 8px; padding-bottom: 8px; }
 .bm-actions { display: flex; gap: 8px; padding: 0 14px 12px; }
 .bm-actions .btn .i { width: 13px; height: 13px; }
+
+/* Self-update: a small bar above your name when a newer version is ready. */
+#update-bar { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; padding: 7px 10px; font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius-lg); background: var(--sel-bg); }
+#update-bar span { flex: 1; min-width: 0; }
+#update-bar button { color: var(--accent); font-weight: 600; white-space: nowrap; }
+#update-bar button:hover { text-decoration: underline; }

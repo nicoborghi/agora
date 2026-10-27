@@ -20,12 +20,15 @@ pub struct AppState {
     pub boot: Mutex<boot::BootConfig>,
     pub data_dir: PathBuf,
     pub popups: Arc<popup::Popups>,
+    /// An update found by `check_update`, waiting for the user to install it.
+    pub update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 fn main() {
     tracing_subscriber::fmt().with_target(false).init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .register_asynchronous_uri_scheme_protocol(media::LEGACY_SCHEME, media::handle)
         .setup(|app| {
@@ -48,7 +51,7 @@ fn main() {
             let starter = engine.clone();
             tauri::async_runtime::spawn(async move { starter.start() });
 
-            app.manage(AppState { engine, boot: Mutex::new(boot), data_dir, popups });
+            app.manage(AppState { engine, boot: Mutex::new(boot), data_dir, popups, update: Mutex::new(None) });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -111,6 +114,8 @@ fn main() {
             commands::set_titlebar,
             commands::get_profile,
             commands::get_bookmarks,
+            commands::check_update,
+            commands::install_update,
             commands::set_bookmark,
             commands::channel_members,
             commands::popup_ready,
