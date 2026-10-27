@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nicoborghi/agora/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/ci.yml?branch=main&label=CI&logo=github&logoColor=white" alt="CI"></a>
+  <a href="https://github.com/nicoborghi/agora/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/ci.yml?branch=main&label=Builds&logo=github&logoColor=white" alt="Builds"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/v/release/nicoborghi/agora?include_prereleases&label=release&color=7c5cff" alt="Release"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/downloads/nicoborghi/agora/total?color=2f80ed" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white" alt="Windows 10 | 11">
@@ -26,29 +26,15 @@
 
 ## More than three apps in one window
 
-Agora is not a wrapper that stacks three web apps in tabs. It talks to each service through its API, turns
-everything into one data model, and builds features none of the official clients have across workspaces:
+Agora is not a wrapper that stacks web apps in different tabs. It talks to each service through its API, turns everything into one data model, and provides new features:
 
-- **One Home for everything.** A card per workspace, in its own colour, with what is new and who mentioned you.
-  *All conversations* puts every workspace in one sidebar, with each service's own sections and favourites.
-- **Search across every service at once**, even offline: the local archive is indexed, and *Search on the server*
-  reaches back further. `from:`, `in:`, quoted phrases and a date filter work the same everywhere.
-- **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for
-  direct messages and one for channels, overridden per workspace, overridden again per conversation (with its own
-  sound and popup). Mentions and keywords can break through any level, quiet hours hold everything back, and the
-  taskbar shows a dot in each workspace's colour.
-- **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat
-  room. Favourites sync both ways where the service allows it.
-- **Your history stays with you.** Every message received is kept in a local, encrypted archive (SQLCipher,
-  key in Windows Credential Manager), searchable and readable without a connection.
-- **People, wherever they are.** Profiles with title, local time, status and contact details; member lists;
-  click any @mention or #channel to open it.
-- **Writing that feels good.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop
-  images, a built-in image editor (crop, arrows, highlights, text), and a preview of what others will see.
-- **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service:
-  about 100 MB of memory with several workspaces, no framework, no per-service browser.
-- **Made to be yours.** Light, dark or system theme, accent colours, three text sizes, compact or wide spacing,
-  Lato or Windows fonts.
+- **One Home for everything.** Workspace cards with new messages and mentions. *All conversations* from every workspace in one sidebar.
+- **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
+- **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
+- **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it, and bookmarks collect messages from every workspace on one page.
+- **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
+- **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
+
 
 ## Supported chat systems
 
@@ -262,6 +248,11 @@ editor, themes and accent colours, automated releases.
 Next: signed auto-update (the release workflow is ready for the signing key), start with Windows, single instance,
 an image cache with a size limit, custom emoji. Mac and Linux builds are possible (Tauri runs there) but not
 planned for the beta.
+
+To do: a local *Agora profile*, protected by a password, that owns your workspaces and everything you set up
+around them (favourites kept only in Agora, groups, notification levels, colours and logos). Removing a
+workspace and adding it back, or moving to another PC, would then restore all of it. Today, *Sign in* again
+keeps everything, but *Remove* followed by adding the workspace again starts it from scratch.
 
 ## License
 

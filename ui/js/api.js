@@ -33,7 +33,8 @@ export function toast(text, ms = 2500) {
 const PATHS = {
   star: '<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/>',
   bell: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/>',
-  bellOff: '<path d="M4 11V7a4 4 0 0 1 6.2-3.3M12 7v4l1.2 1.5H5.5"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
+  // The bell above with one clean slash across it.
+  bellOff: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/><path d="M2.6 2.4 13.4 13.6"/>',
   image: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M14 11l-3.5-3.5L4 13"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   // Same weight as home/grid: a plain ring with eight short, rounded teeth and a hub.
@@ -65,6 +66,7 @@ const PATHS = {
   external: '<path d="M9 2.5h4.5V7"/><path d="M13.5 2.5L7.5 8.5"/><path d="M12 9.5v4H2.5V4h4"/>',
   back: '<path d="M10 3.5L5.5 8l4.5 4.5"/>',
   folder: '<path d="M2 4.5h4.5l1.5 1.5h6v7.5H2z"/>',
+  bookmark: '<path d="M4.5 2.5h7v11L8 10.6l-3.5 2.9z"/>',
   chats: '<path d="M2 3.5h8.5v5.5H5.5L3 11V9H2z"/><path d="M12.5 6h1.5v5.5h-1V13.5l-2.5-2H6.5V10"/>',
   at: '<circle cx="8" cy="8" r="2.6"/><path d="M10.6 8v1.1c0 1.2 1.9 1.6 2.6.3.9-2.1.2-5.4-2.6-6.5-2.9-1.2-6.6.6-7.1 4-.5 3.4 2.2 6.2 5.6 5.9 1-.1 1.8-.4 2.5-.9"/>',
   moon: '<path d="M13 9.8A5.5 5.5 0 0 1 6.2 3a5.5 5.5 0 1 0 6.8 6.8z"/>',

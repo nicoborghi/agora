@@ -84,7 +84,9 @@ pub fn from_slack(text: &str, name_of: &dyn Fn(&str) -> Option<String>) -> (Stri
         if let Some(id) = target.strip_prefix('@') {
             let name = label.map(|l| l.trim_start_matches('@').to_string()).or_else(|| name_of(id)).unwrap_or_else(|| id.to_string());
             out.push('@');
-            out.push_str(&name);
+            // Shown names can have spaces ("Hervé Aussel"): a no-break space keeps the mention one
+            // word for the renderer, and looks the same.
+            out.push_str(&name.trim().replace(' ', "\u{a0}"));
             mentions.push(id.to_string());
         } else if let Some(id) = target.strip_prefix('#') {
             // Slack often sends `<#C123|>` with an empty label: look the name up.
@@ -434,6 +436,7 @@ mod tests {
         assert_eq!(m, vec!["U1".to_string(), MENTION_ALL.to_string()]);
         assert_eq!(from_slack("<https://x.org>", &names).0, "https://x.org");
         assert_eq!(from_slack("<@U7>", &names).0, "@U7");
+        assert_eq!(from_slack("<@U2|Hervé Aussel> ok", &names).0, "@Hervé\u{a0}Aussel ok");
     }
 
     #[test]

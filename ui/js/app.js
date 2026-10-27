@@ -4,6 +4,7 @@
 import { invoke, listen, esc, initials, toast, icon } from './api.js';
 import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls } from './markdown.js';
 import { editImage } from './editor.js';
+import { EMOJI_GROUPS } from './emoji-data.js';
 import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged } from './settings.js';
 
 const PAGE = 50;
@@ -28,6 +29,9 @@ export const S = {
   previewOn: false,
   newSince: null, // last-read time when the open conversation was opened with news
   stick: true, // the message list follows the bottom
+  bookmarks: new Set(), // bkey() of bookmarked messages
+  bookmarkList: [], // the bookmarked messages, newest bookmark first
+  drafts: {}, // key(a, c) -> unsent text
 };
 
 const key = (a, c) => `${a}\u0001${c}`;
@@ -37,7 +41,7 @@ const enabledAccounts = () => S.accounts.filter((a) => a.enabled);
 const isDirect = (c) => c.kind === 'dm' || c.kind === 'group';
 const isOpen = (a, c) => S.open && S.open.a === a && S.open.c === c;
 // The workspace selected in the left bar, or null for Home and All.
-const railAccount = () => (S.rail === 'all' || S.rail === 'home' ? null : S.rail);
+const railAccount = () => (['all', 'home', 'bookmarks'].includes(S.rail) ? null : S.rail);
 const KIND_NAMES = { slack: 'Slack', mattermost: 'Mattermost', rocketchat: 'Rocket.Chat', demo: 'Demo' };
 export const kindName = (k) => KIND_NAMES[k] || k;
 
@@ -75,6 +79,8 @@ async function init() {
   if (railAccount() && !account(S.rail)) S.rail = 'home';
   applyTheme();
   await listen('agora', onEvent);
+  S.drafts = load('drafts') || {};
+  loadBookmarks();
   await listen('agora-sound', playSound);
   await listen('agora-open', (p) => openChannel(p.account_id, p.channel_id));
   bindUi();
@@ -273,12 +279,19 @@ async function reloadOpen() {
 // ------------------------------------------------------------ rail
 
 RENDER.rail = function renderRail() {
+  // Same rule as the tray: conversations with notifications off (Silent) add no dot, unless
+  // someone mentioned you and mentions override levels.
   const unread = new Set();
-  for (const c of S.channels.values()) if (c.unread > 0 || c.mentions > 0) unread.add(c.account_id);
+  const mentionsBreakThrough = S.settings?.notifications?.mentions_override !== false;
+  for (const c of S.channels.values()) {
+    const news = c.unread > 0 || c.mentions > 0;
+    if (news && (!c.muted || (c.mentions > 0 && mentionsBreakThrough))) unread.add(c.account_id);
+  }
   const inSettings = settingsOpen();
   const on = (id) => (!inSettings && S.rail === id ? 'active' : '');
   let html = `<div class="rail-item home ${on('home')}" data-id="home" title="Home (Ctrl+0)">${icon('grid')}<span class="num">0</span></div>
-    <div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div><div class="rail-sep"></div>`;
+    <div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div>
+    <div class="rail-item all bookmarks ${on('bookmarks')}" data-id="bookmarks" title="Bookmarks">${icon('bookmark')}</div><div class="rail-sep"></div>`;
   enabledAccounts().forEach((a, i) => {
     const st = S.conn[a.id];
     const cls = st?.state === 'auth_expired' ? 'expired' : st?.state === 'offline' ? 'offline' : '';
@@ -368,7 +381,7 @@ function selectRail(id) {
   if (id !== S.rail && S.panel) { S.panel = null; schedule('panel', 'header'); }
   S.rail = id;
   save('rail', id);
-  if (id === 'home') closeChannel();
+  if (id === 'home' || id === 'bookmarks') closeChannel();
   // A workspace never shows another one's chat: reopen its last conversation, else its newest.
   if (railAccount() && S.open?.a !== id) {
     const mine = [...S.channels.values()].filter((c) => c.account_id === id);
@@ -423,8 +436,10 @@ export function inkFor(hex) {
 function badgeHtml(c) {
   const color = account(c.account_id)?.color || '';
   const style = color ? ` style="--c:${esc(color)};--cf:${inkFor(color)}"` : '';
-  if (c.mentions > 0) return `<span class="badge mention"${style} title="${c.mentions} mention${c.mentions === 1 ? '' : 's'}">${count(c.mentions)}</span>`;
-  if (isDirect(c) && c.unread > 0) return `<span class="badge mention"${style}>${count(c.unread)}</span>`;
+  // Notifications off: only a mention can still show (when mentions override levels).
+  const mentionsShow = !c.muted || S.settings?.notifications?.mentions_override !== false;
+  if (c.mentions > 0 && mentionsShow) return `<span class="badge mention"${style} title="${c.mentions} mention${c.mentions === 1 ? '' : 's'}">${count(c.mentions)}</span>`;
+  if (isDirect(c) && c.unread > 0 && !c.muted) return `<span class="badge mention"${style}>${count(c.unread)}</span>`;
   return '';
 }
 
@@ -432,6 +447,7 @@ function rowHtml(c, showService) {
   const acc = account(c.account_id);
   return `<div class="row ${isOpen(c.account_id, c.id) ? 'active' : ''} ${isUnread(c) ? 'unread' : ''} ${c.muted ? 'muted' : ''}" data-a="${esc(c.account_id)}" data-c="${esc(c.id)}" draggable="true"
     title="${esc([c.group, acc?.name, c.muted ? 'notifications off' : ''].filter(Boolean).join(' · '))}">${glyph(c)}<span class="name">${esc(c.display_name)}</span>
+    ${S.drafts[key(c.account_id, c.id)] && !isOpen(c.account_id, c.id) ? `<span class="draft-mark" title="Draft">${icon('edit')}</span>` : ''}
     ${c.muted ? `<span class="muted-bell" title="Notifications off">${icon('bellOff')}</span>` : ''}
     ${showService ? serviceMark(acc) : ''}${badgeHtml(c)}</div>`;
 }
@@ -613,11 +629,21 @@ export async function relogin(id) {
 
 // ------------------------------------------------------------ conversation
 
+/** Keeps what is typed in the open conversation's composer as its draft (not while editing a message). */
+function saveDraft() {
+  if (!S.open || S.editing) return;
+  const k = key(S.open.a, S.open.c);
+  const text = $('#input').value;
+  if (text.trim()) S.drafts[k] = text; else delete S.drafts[k];
+  save('drafts', S.drafts);
+}
+
 async function openChannel(a, c) {
   const ch = S.channels.get(key(a, c));
   if (!ch) return;
   if (S.rail !== 'all' && S.rail !== a) S.rail = a;
-  if (!isOpen(a, c)) { clearPending(); closeAutocomplete(); }
+  const switching = !isOpen(a, c);
+  if (switching) { saveDraft(); clearPending(); closeAutocomplete(); }
   S.open = { a, c };
   S.messages = [];
   S.hasOlder = true;
@@ -631,6 +657,8 @@ async function openChannel(a, c) {
   hideInfo();
   const input = $('#input');
   input.placeholder = `Message ${isDirect(ch) ? ch.display_name : '#' + ch.display_name}`;
+  // Each conversation has its own draft.
+  if (switching) { input.value = S.drafts[key(a, c)] || ''; autosize(input); }
   // With news, open at the first unread message (everything after it is highlighted);
   // otherwise at the newest. Read before open_channel, which marks the conversation read.
   S.newSince = isUnread(ch) && ch.last_read > 0 ? ch.last_read : null;
@@ -650,6 +678,8 @@ async function openChannel(a, c) {
 }
 
 function closeChannel() {
+  saveDraft();
+  if (S.open) $('#input').value = '';
   S.open = null;
   S.messages = [];
   S.panel = null;
@@ -669,16 +699,72 @@ const plain = (md, max = 140) => {
 
 let homeTimer = 0;
 RENDER.home = function renderHome() {
-  const show = S.rail === 'home' && !S.open;
-  // Home is its own page: the cards replace the conversation list.
+  const show = (S.rail === 'home' || S.rail === 'bookmarks') && !S.open;
+  // Home and Bookmarks are pages of their own: they replace the conversation list.
   document.body.classList.toggle('home-mode', show);
   $('#home').hidden = !show;
   if (!S.open) $('#empty').hidden = show;
   if (!show) return;
+  if (S.rail === 'bookmarks') { renderBookmarks(); return; }
   // Bursts of events (catch-up after connecting) reload the view once.
   clearTimeout(homeTimer);
   homeTimer = setTimeout(loadHome, 200);
 };
+
+// ------------------------------------------------------------ bookmarks
+
+const bkey = (m) => `${m.account_id}\u0001${m.channel_id}\u0001${m.id}`;
+
+async function loadBookmarks() {
+  try {
+    S.bookmarkList = await invoke('get_bookmarks');
+  } catch (e) {
+    S.bookmarkList = [];
+  }
+  S.bookmarks = new Set(S.bookmarkList.map(bkey));
+  schedule('messages', 'rail', 'home');
+}
+
+async function toggleBookmark(m) {
+  const on = !S.bookmarks.has(bkey(m));
+  try {
+    await invoke('set_bookmark', { account_id: m.account_id, channel_id: m.channel_id, message_id: m.id, on });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (on) {
+    S.bookmarks.add(bkey(m));
+    S.bookmarkList.unshift(m);
+    toast('Bookmarked');
+  } else {
+    S.bookmarks.delete(bkey(m));
+    S.bookmarkList = S.bookmarkList.filter((b) => bkey(b) !== bkey(m));
+  }
+  schedule('messages', 'rail', 'home');
+}
+
+/** Every bookmarked message, newest bookmark first, with where it is and a way back to it. */
+function renderBookmarks() {
+  const list = S.bookmarkList || [];
+  const items = list.map((m) => {
+    const ch = S.channels.get(key(m.account_id, m.channel_id));
+    const acc = account(m.account_id);
+    return `<article class="bm-item" data-a="${esc(m.account_id)}" data-c="${esc(m.channel_id)}" data-id="${esc(m.id)}">
+      <div class="bm-where">${serviceMark(acc)}<span class="muted">${esc(acc?.name || '')}</span>
+        ${ch ? `${glyph(ch)}<b>${esc(ch.display_name)}</b>` : '<b class="muted">Conversation not in your sidebar</b>'}
+        <time>${esc(new Date(m.ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</time></div>
+      <div class="bm-msg">${messageHtml(m, false, true)}</div>
+      <div class="bm-actions">
+        ${ch ? `<button class="btn" data-act="bm-open">${icon('reply')}Go to message</button>` : ''}
+        <button class="btn" data-act="bm-remove">${icon('close')}Remove bookmark</button></div>
+    </article>`;
+  }).join('');
+  $('#home').innerHTML = `<div class="home-head"><h1>Bookmarks</h1>
+      <p class="muted">${list.length ? `${list.length} saved ${list.length === 1 ? 'message' : 'messages'}, kept in Agora only.`
+        : 'Bookmark a message with its bookmark button to find it here, whatever the workspace.'}</p></div>
+    <div class="bm-list">${items}</div>`;
+}
 
 async function loadHome() {
   let items = [];
@@ -794,8 +880,10 @@ function linksHtml(m) {
 
 function toolsHtml(m, inThread) {
   if (m.deleted) return '';
+  const marked = S.bookmarks.has(bkey(m));
   return `<div class="msg-tools">
     <button class="icon-btn" data-act="react" title="Add reaction">${icon('smile')}</button>
+    <button class="icon-btn ${marked ? 'on' : ''}" data-act="bookmark" title="${marked ? 'Remove bookmark' : 'Bookmark'}">${icon('bookmark')}</button>
     ${inThread ? '' : `<button class="icon-btn" data-act="thread" title="Reply in thread">${icon('reply')}</button>`}
     ${m.is_self ? `<button class="icon-btn" data-act="edit" title="Edit">${icon('edit')}</button>
       <button class="icon-btn" data-act="delete" title="Delete (click twice)">${icon('trash')}</button>` : ''}</div>`;
@@ -828,7 +916,7 @@ function messageHtml(m, grouped, inThread) {
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
   const replies = !inThread && m.reply_count
     ? `<button class="replies" data-act="thread">${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}</button>` : '';
-  return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''}" data-id="${esc(m.id)}">
+  return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''}" data-id="${esc(m.id)}">
     ${grouped ? `<span class="gutter-time">${fmtTime(m.ts)}</span>` : messageAvatar(m)}
     <div class="msg-main">
       ${grouped ? '' : `<div class="msg-head"><b class="author"${personAttrs(m)}>${esc(m.author_name)}</b><time title="${esc(new Date(m.ts).toLocaleString())}">${fmtTime(m.ts)}</time></div>`}
@@ -846,7 +934,12 @@ function messagesHtml(list, inThread, newSince = null) {
   for (const m of list) {
     const d = new Date(m.ts).toDateString();
     if (d !== day) {
-      if (!inThread) out += `<div class="day">${fmtDay(m.ts)}</div>`;
+      // Each day is a group, so its date line stays pinned at the top only while that day is
+      // on screen. Today's line scrolls normally.
+      if (!inThread) {
+        const today = d === new Date().toDateString();
+        out += `${day ? '</section>' : ''}<section class="day-group"><div class="day ${today ? 'today' : ''}"><span>${fmtDay(m.ts)}</span></div>`;
+      }
       day = d;
       prev = null;
     }
@@ -861,7 +954,7 @@ function messagesHtml(list, inThread, newSince = null) {
     out += dividerShown && fresh ? html.replace('class="msg ', 'class="msg fresh ') : html;
     prev = m;
   }
-  return out;
+  return !inThread && day ? `${out}</section>` : out;
 }
 
 /**
@@ -958,6 +1051,7 @@ async function submit() {
   const { a, c } = S.open;
   const files = editing ? [] : pending.splice(0);
   input.value = '';
+  if (!editing) { delete S.drafts[key(a, c)]; save('drafts', S.drafts); }
   autosize(input);
   S.editing = null;
   hideInfo();
@@ -969,6 +1063,7 @@ async function submit() {
     toast(String(e));
     input.value = text;
     autosize(input);
+    saveDraft();
   }
   await uploadFiles(a, c, files);
 }
@@ -1130,19 +1225,60 @@ function autocompleteKey(e) {
   return true;
 }
 
-function showEmojiPicker(anchor, input) {
-  showPopover(anchor, `<div class="emoji-grid wide">${COMMON_EMOJI.filter((n) => EMOJI[n])
-    .map((n) => `<button data-emoji="${n}" title=":${n}:">${EMOJI[n]}</button>`).join('')}</div>`, (pop) => {
+/**
+ * Every standard emoji: a first tab of everyday ones (`first`), a tab per category and a search.
+ * Only the open tab's buttons are in the page.
+ */
+function showFullEmojiPicker(anchor, first, onPick) {
+  const tabs = [['Frequently used', first], ...EMOJI_GROUPS.map(([name, list]) => [name, list.split(' ')])];
+  let tab = 0;
+  const buttons = (names) => names.filter((n) => EMOJI[n])
+    .map((n) => `<button data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n]}</button>`).join('');
+  showPopover(anchor, `<div class="emoji-picker">
+      <input type="text" class="emoji-search" placeholder="Search emoji" spellcheck="false">
+      <div class="emoji-tabs">${tabs.map(([name, list], i) =>
+        `<button data-tab="${i}" class="${i ? '' : 'on'}" title="${esc(name)}">${EMOJI[list[0]] || ''}</button>`).join('')}</div>
+      <div class="emoji-grid wide"></div></div>`, (pop) => {
+    const grid = pop.querySelector('.emoji-grid');
+    const search = pop.querySelector('.emoji-search');
+    const draw = () => {
+      const q = search.value.trim().toLowerCase().replace(/:/g, '');
+      if (!q) { grid.innerHTML = buttons(tabs[tab][1]); return; }
+      // Names that start with the query first; one button per emoji even when it has aliases.
+      const seen = new Set();
+      const hits = Object.keys(EMOJI).filter((n) => n.includes(q))
+        .sort((x, y) => Number(!x.startsWith(q)) - Number(!y.startsWith(q)) || x.length - y.length)
+        .filter((n) => !seen.has(EMOJI[n]) && seen.add(EMOJI[n]));
+      grid.innerHTML = buttons(hits.slice(0, 200)) || '<p class="muted">No emoji found</p>';
+    };
+    draw();
+    search.focus();
+    search.addEventListener('input', draw);
     pop.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-tab]');
+      if (t) {
+        tab = Number(t.dataset.tab);
+        search.value = '';
+        pop.querySelectorAll('[data-tab]').forEach((x) => x.classList.toggle('on', x === t));
+        draw();
+        grid.scrollTop = 0;
+        return;
+      }
       const b = e.target.closest('[data-emoji]');
       if (!b) return;
       closePopover();
-      const s = input.selectionStart;
-      const pad = s > 0 && !/\s/.test(input.value[s - 1]) ? ' ' : '';
-      input.setRangeText(`${pad}:${b.dataset.emoji}: `, s, input.selectionEnd, 'end');
-      input.focus();
-      autosize(input);
+      onPick(b.dataset.emoji);
     });
+  });
+}
+
+function showEmojiPicker(anchor, input) {
+  showFullEmojiPicker(anchor, COMMON_EMOJI, (name) => {
+    const s = input.selectionStart;
+    const pad = s > 0 && !/\s/.test(input.value[s - 1]) ? ' ' : '';
+    input.setRangeText(`${pad}:${name}: `, s, input.selectionEnd, 'end');
+    input.focus();
+    autosize(input);
   });
 }
 
@@ -1614,10 +1750,11 @@ function renderSearch(el) {
     <div class="panel-body" id="search-body">${body}<div class="search-foot">${remote}</div></div>`;
 }
 
-/** Opens the conversation at a search hit: loads history back to it, or opens its thread. */
-async function jumpTo(a, c, id) {
-  const p = S.panel;
-  const m = p?.hits?.find((h) => h.account_id === a && h.id === id);
+/** Opens the conversation at a message (a search hit, or `found`: a bookmark): loads history back
+ *  to it, or opens its thread. */
+async function jumpTo(a, c, id, found = null) {
+  const p = found ? null : S.panel;
+  const m = found || p?.hits?.find((h) => h.account_id === a && h.id === id);
   if (!m) return;
   if (!S.channels.has(key(a, c))) { toast('This conversation is not in your sidebar any more.'); return; }
   if (!isOpen(a, c)) await openChannel(a, c);
@@ -1628,12 +1765,19 @@ async function jumpTo(a, c, id) {
     S.hasOlder = older.length >= 100;
     S.messages = older.concat(S.messages);
   }
+  // The highlight is part of the message's state, so a redraw (opening queues one) keeps it, and
+  // the list stops following the bottom so it stays at the message.
+  S.flash = id;
   renderMessages();
   const el = $('#messages').querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
-  if (!el) { toast('That message is too far back to show here.'); return; }
+  if (!el) { S.flash = null; toast('That message is too far back to show here.'); return; }
   el.scrollIntoView({ block: 'center' });
-  el.classList.add('flash');
-  setTimeout(() => el.classList.remove('flash'), 2200);
+  S.stick = false;
+  setTimeout(() => {
+    if (S.flash !== id) return;
+    S.flash = null;
+    $('#messages').querySelector('.msg.flash')?.classList.remove('flash');
+  }, 2200);
 }
 
 // ------------------------------------------------------------ favorites and Agora groups
@@ -1792,14 +1936,7 @@ function closePopover() {
 }
 
 function showReactionPicker(anchor, m) {
-  showPopover(anchor, `<div class="emoji-grid">${QUICK_REACTIONS.map((n) => `<button data-emoji="${n}" title=":${n}:">${emoji(n)}</button>`).join('')}</div>`, (pop) => {
-    pop.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-emoji]');
-      if (!b) return;
-      closePopover();
-      toggleReaction(m, b.dataset.emoji, true);
-    });
-  });
+  showFullEmojiPicker(anchor, QUICK_REACTIONS, (name) => toggleReaction(m, name, true));
 }
 
 async function toggleReaction(m, name, forceAdd = false) {
@@ -2036,6 +2173,7 @@ function onMessageAreaClick(e, inPanel) {
   if (!m) return;
   switch (btn.dataset.act) {
     case 'react': showReactionPicker(btn, m); break;
+    case 'bookmark': toggleBookmark(m); break;
     case 'toggle-reaction': toggleReaction(m, btn.dataset.emoji); break;
     case 'thread': openThread(m.id); break;
     case 'edit': startEdit(m); break;
@@ -2164,6 +2302,16 @@ function bindUi() {
   });
 
   $('#home').addEventListener('click', (e) => {
+    const bm = e.target.closest('.bm-item');
+    if (bm) {
+      const m = S.bookmarkList.find((x) => x.account_id === bm.dataset.a && x.channel_id === bm.dataset.c && x.id === bm.dataset.id);
+      if (!m) return;
+      if (e.target.closest('[data-act="bm-remove"]')) { toggleBookmark(m); return; }
+      if (e.target.closest('[data-act="bm-open"]')) { jumpTo(m.account_id, m.channel_id, m.id, m); return; }
+      const link = e.target.closest('a[data-url]');
+      if (link) { e.preventDefault(); invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x))); }
+      return;
+    }
     const item = e.target.closest('.home-item');
     if (item) { openChannel(item.dataset.a, item.dataset.c); return; }
     const head = e.target.closest('[data-rail]');
@@ -2318,8 +2466,11 @@ function bindUi() {
   const input = $('#input');
   renderFormatBar();
   let previewTimer = 0;
+  let draftTimer = 0;
   input.addEventListener('input', () => {
     autosize(input);
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraft, 400);
     updateAutocomplete(input, S.open?.a);
     if (S.previewOn) { clearTimeout(previewTimer); previewTimer = setTimeout(updatePreview, 250); }
   });

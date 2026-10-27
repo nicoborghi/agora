@@ -115,7 +115,9 @@ function inline(src) {
   s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
   // @someone opens their profile; @here/@channel/@all address everyone. #name opens a conversation.
   s = s.replace(/(^|[^\w@])@(here|channel|all|everyone)\b/g, '$1<span class="mention all">@$2</span>');
-  s = s.replace(/(^|[^\w@>])@([\w.\-]+\w|\w)/g, '$1<span class="mention" data-handle="$2">@$2</span>');
+  // Any language's letters ("@Hervé"); a no-break space joins multi-word names (Slack sends them so).
+  s = s.replace(/(^|[^\p{L}\p{N}_@>])@([\p{L}\p{N}_](?:[\p{L}\p{N}_.\-\u{a0}]*[\p{L}\p{N}_])?)/gu,
+    (_, pre, name) => `${pre}<span class="mention" data-handle="${name.replace(/\u00a0/g, ' ')}">@${name}</span>`);
   s = s.replace(/(^|[\s(])#([A-Za-z][\w.\-]*\w|[A-Za-z])/g, '$1<span class="chan-ref" data-chan="$2">#$2</span>');
   s = s.replace(/:([a-z0-9_+\-]+):(?::skin-tone-([2-6]):)?/g, (m, name, tone) => withTone(name, tone) || m);
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[+i]);

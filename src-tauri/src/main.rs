@@ -110,6 +110,8 @@ fn main() {
             commands::set_zoom,
             commands::set_titlebar,
             commands::get_profile,
+            commands::get_bookmarks,
+            commands::set_bookmark,
             commands::channel_members,
             commands::popup_ready,
             commands::popup_resize,

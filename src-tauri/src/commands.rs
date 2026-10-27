@@ -182,6 +182,22 @@ pub async fn search_messages(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn get_bookmarks(state: State<'_, AppState>) -> CmdResult<Vec<MessageView>> {
+    state.engine.bookmarks()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_bookmark(
+    state: State<'_, AppState>,
+    account_id: String,
+    channel_id: String,
+    message_id: String,
+    on: bool,
+) -> CmdResult<()> {
+    state.engine.set_bookmark(&account_id, &channel_id, &message_id, on)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_me(state: State<'_, AppState>, account_id: String) -> CmdResult<Option<SelfView>> {
     state.engine.me(&account_id)
 }
@@ -603,10 +619,15 @@ pub async fn set_zoom(app: AppHandle, scale: f64) -> CmdResult<()> {
 }
 
 /// Paints the Windows title bar like the app's top edge: `dark` picks the light or dark frame
-/// (Windows 10 and 11), `caption`/`text`/`border` are "#rrggbb" colours that Windows 11 applies on
+/// (Windows 10 and 11), `caption`/`border` are "#rrggbb" colours that Windows 11 applies on
 /// top; older versions ignore them and keep the plain light/dark frame.
+///
+/// The window keeps its title ("Agora", shown in the taskbar preview and Alt+Tab), but the title
+/// bar does not draw it: the caption text is turned off, and on Windows 11 its colour is also
+/// the caption colour. `text` is unused for that reason (kept so the UI call stays the same).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: String, border: String) -> CmdResult<()> {
+    let _ = text;
     let w = app.get_webview_window("main").ok_or("no main window")?;
     w.set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light })).map_err(err)?;
     #[cfg(windows)]
@@ -615,14 +636,26 @@ pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: Str
         extern "system" {
             fn DwmSetWindowAttribute(hwnd: isize, attr: u32, value: *const u32, size: u32) -> i32;
         }
+        #[repr(C)]
+        struct WtaOptions {
+            flags: u32,
+            mask: u32,
+        }
+        #[link(name = "uxtheme")]
+        extern "system" {
+            fn SetWindowThemeAttribute(hwnd: isize, attr: u32, value: *const WtaOptions, size: u32) -> i32;
+        }
+        // WTA_NONCLIENT = 1, WTNCA_NODRAWCAPTION = 1: no title text in the frame.
+        let no_caption = WtaOptions { flags: 1, mask: 1 };
+        unsafe { SetWindowThemeAttribute(w.hwnd().map_err(err)?.0 as isize, 1, &no_caption, std::mem::size_of::<WtaOptions>() as u32) };
         // COLORREF is 0x00BBGGRR.
         let colorref = |hex: &str| -> Option<u32> {
             let v = u32::from_str_radix(hex.trim_start_matches('#'), 16).ok().filter(|_| hex.len() == 7)?;
             Some(((v & 0xff) << 16) | (v & 0xff00) | (v >> 16))
         };
         let hwnd = w.hwnd().map_err(err)?.0 as isize;
-        // DWMWA_BORDER_COLOR 34, DWMWA_CAPTION_COLOR 35, DWMWA_TEXT_COLOR 36.
-        for (attr, hex) in [(34, &border), (35, &caption), (36, &text)] {
+        // DWMWA_BORDER_COLOR 34, DWMWA_CAPTION_COLOR 35, DWMWA_TEXT_COLOR 36 (= caption: hidden).
+        for (attr, hex) in [(34, &border), (35, &caption), (36, &caption)] {
             if let Some(c) = colorref(hex) {
                 unsafe { DwmSetWindowAttribute(hwnd, attr, &c, 4) };
             }

@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS channel_prefs (
     account_id TEXT NOT NULL, channel_id TEXT NOT NULL, prefs TEXT NOT NULL,
     PRIMARY KEY (account_id, channel_id)
 );
+CREATE TABLE IF NOT EXISTS bookmarks (
+    account_id TEXT NOT NULL, channel_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY (account_id, channel_id, message_id)
+);
 ";
 
 const MSG_COLS: &str = "m.account_id, m.channel_id, m.id, m.author_id, m.ts, m.text, m.thread_root, \
@@ -479,7 +483,7 @@ impl Store {
         let tx = db.transaction()?;
         tx.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
         if purge {
-            for table in ["channels", "users", "messages", "message_versions", "channel_prefs"] {
+            for table in ["channels", "users", "messages", "message_versions", "channel_prefs", "bookmarks"] {
                 tx.execute(&format!("DELETE FROM {table} WHERE account_id = ?1"), [id])?;
             }
         }
@@ -799,6 +803,46 @@ impl Store {
         Ok(out)
     }
 
+    /// Bookmarks are Agora's own: kept in the archive, never sent to the service.
+    pub fn set_bookmark(&self, acc: &str, ch: &str, id: &str, on: bool, now: Millis) -> StoreResult<()> {
+        let db = self.db();
+        if on {
+            db.execute(
+                "INSERT OR IGNORE INTO bookmarks (account_id, channel_id, message_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![acc, ch, id, now],
+            )?;
+        } else {
+            db.execute("DELETE FROM bookmarks WHERE account_id = ?1 AND channel_id = ?2 AND message_id = ?3", params![acc, ch, id])?;
+        }
+        Ok(())
+    }
+
+    /// Bookmarked messages, most recently bookmarked first, with author names.
+    pub fn bookmarks(&self) -> StoreResult<Vec<Authored>> {
+        let db = self.db();
+        let mut st = db.prepare(&format!(
+            "SELECT {MSG_COLS}, {AUTHOR_NAME}, u.avatar_url FROM bookmarks b
+             JOIN messages m ON m.account_id = b.account_id AND m.channel_id = b.channel_id AND m.id = b.message_id
+             {AUTHOR_JOIN}
+             ORDER BY b.created_at DESC"
+        ))?;
+        let rows = st.query_map([], |r| read_authored(r))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// How many of these message ids the archive does not have yet.
+    pub fn missing_messages(&self, acc: &str, ch: &str, ids: &[String]) -> StoreResult<usize> {
+        let db = self.db();
+        let mut st = db.prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND channel_id = ?2 AND id = ?3")?;
+        let mut n = 0;
+        for id in ids {
+            if !st.exists(params![acc, ch, id])? {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
     /// (id, display name, picture URL) for each id; unknown people get their id as name.
     pub fn user_cards(&self, acc: &str, ids: &[String]) -> StoreResult<Vec<(String, String, Option<String>)>> {
         let db = self.db();
@@ -1014,6 +1058,29 @@ mod tests {
         assert_eq!(older, vec!["1"]);
         let thread: Vec<String> = s.thread("a", "c", "1").unwrap().into_iter().map(|a| a.message.id).collect();
         assert_eq!(thread, vec!["1", "3"]);
+    }
+
+    #[test]
+    fn bookmarks_newest_first_and_removable() {
+        let s = temp_store();
+        s.upsert_messages(&[msg("1", 10, None), msg("2", 20, None)]).unwrap();
+        s.set_bookmark("a", "c", "1", true, 100).unwrap();
+        s.set_bookmark("a", "c", "2", true, 200).unwrap();
+        s.set_bookmark("a", "c", "2", true, 300).unwrap(); // twice: still one
+        let ids = |s: &Store| s.bookmarks().unwrap().into_iter().map(|a| a.message.id).collect::<Vec<_>>();
+        assert_eq!(ids(&s), vec!["2", "1"]);
+        s.set_bookmark("a", "c", "2", false, 0).unwrap();
+        assert_eq!(ids(&s), vec!["1"]);
+    }
+
+    #[test]
+    fn missing_messages_counts_unknown_ids() {
+        let s = temp_store();
+        s.upsert_messages(&[msg("1", 10, None), msg("2", 20, None)]).unwrap();
+        let ids = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(s.missing_messages("a", "c", &ids(&["1", "2"])).unwrap(), 0);
+        assert_eq!(s.missing_messages("a", "c", &ids(&["2", "3", "4"])).unwrap(), 2);
+        assert_eq!(s.missing_messages("a", "other", &ids(&["1"])).unwrap(), 1);
     }
 
     #[test]
