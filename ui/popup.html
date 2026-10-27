@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Agora</title>
+  <style>
+    :root { --bg: #ffffff; --fg: #1c1c1f; --fg-2: #6c6c73; --line: #d9d9de; color-scheme: light; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1c1c1f; --fg: #e4e4e7; --fg-2: #8b8b93; --line: #34343a; color-scheme: dark; }
+    }
+    html, body { margin: 0; background: var(--bg); color: var(--fg); overflow: hidden; user-select: none;
+      font: 12px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    #notes { display: flex; flex-direction: column; }
+    .note { height: 76px; box-sizing: border-box; padding: 9px 12px 9px 14px; border: 1px solid var(--line);
+      border-left: 3px solid var(--c); cursor: pointer; overflow: hidden; }
+    .note + .note { border-top: 0; }
+    .note:hover { background: color-mix(in srgb, var(--fg) 5%, var(--bg)); }
+    .meta { color: var(--fg-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .who { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+  <script type="module" src="js/popup.js"></script>
+</head>
+<body><div id="notes"></div></body>
+</html>

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agora: Slack, Mattermost and Rocket.Chat in one app</title>
+  <meta name="description" content="One fast, light Windows app for Slack, Mattermost and Rocket.Chat: one Home and one search across every workspace, with fine-tunable notifications and an encrypted local archive.">
+  <meta property="og:title" content="Agora">
+  <meta property="og:description" content="Slack, Mattermost and Rocket.Chat in one fast, light Windows app.">
+  <meta property="og:image" content="https://nicoborghi.github.io/agora/screenshot.png">
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0e1d; --bg-2: #12162b; --card: #151a33; --line: #262c4d; --fg: #eef0fb; --fg-2: #a3a9c9;
+      --cyan: #38c8f0; --violet: #8b6cf6; --magenta: #e85aa8;
+      --grad: linear-gradient(110deg, var(--cyan), var(--violet) 50%, var(--magenta));
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--fg); }
+    body { font: 17px/1.6 Lato, "Segoe UI", system-ui, sans-serif; overflow-x: hidden; }
+    a { color: inherit; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+    /* Hero */
+    header { position: relative; padding: 72px 0 40px; text-align: center; }
+    header::before { content: ""; position: absolute; inset: -200px 0 auto; height: 620px; z-index: -1;
+      background: radial-gradient(600px 300px at 30% 30%, #38c8f033, transparent 70%),
+                  radial-gradient(600px 300px at 70% 40%, #e85aa82e, transparent 70%),
+                  radial-gradient(500px 260px at 50% 60%, #8b6cf640, transparent 70%); }
+    .logo { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 12px 40px #8b6cf655; }
+    h1 { font-size: clamp(40px, 7vw, 68px); font-weight: 900; letter-spacing: -.02em; margin: 18px 0 6px; }
+    .tagline { font-size: clamp(20px, 2.6vw, 26px); font-weight: 700; margin: 0 auto; max-width: 760px; }
+    .tagline span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .sub { color: var(--fg-2); max-width: 680px; margin: 14px auto 0; }
+    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
+    .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 12px; font-weight: 700;
+      text-decoration: none; border: 1px solid var(--line); background: var(--bg-2); transition: transform .15s, border-color .15s; }
+    .btn:hover { transform: translateY(-1px); border-color: var(--fg-2); }
+    .btn.primary { border: 0; background: var(--grad); color: #fff; box-shadow: 0 10px 30px #8b6cf655; }
+    .btn svg { width: 18px; height: 18px; }
+    .note { color: var(--fg-2); font-size: 14px; margin-top: 12px; }
+
+    /* Screenshot */
+    .shot { margin: 44px auto 0; max-width: 1060px; border-radius: 16px; padding: 1px; background: linear-gradient(140deg, #38c8f066, #8b6cf644, #e85aa866);
+      box-shadow: 0 40px 100px #000a, 0 0 0 1px #ffffff0d; }
+    .shot img { display: block; width: 100%; height: auto; border-radius: 15px; }
+
+    /* Sections */
+    section { padding: 72px 0 0; }
+    h2 { font-size: clamp(28px, 4vw, 38px); font-weight: 900; letter-spacing: -.01em; text-align: center; margin: 0 0 10px; }
+    .lead { color: var(--fg-2); text-align: center; max-width: 680px; margin: 0 auto 36px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 20px; }
+    .card h3 { margin: 12px 0 6px; font-size: 19px; }
+    .card p { margin: 0; color: var(--fg-2); font-size: 15.5px; }
+    .ico { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: #8b6cf622; color: #c4b5fd; }
+    .ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+    .services { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .svc { border-radius: 16px; padding: 22px; border: 1px solid var(--line); background: var(--card); position: relative; overflow: hidden; }
+    .svc::after { content: ""; position: absolute; right: -40px; top: -40px; width: 140px; height: 140px; border-radius: 50%; background: var(--c); opacity: .18; }
+    .svc h3 { margin: 0 0 8px; font-size: 20px; }
+    .svc .how { color: var(--fg-2); font-size: 15px; margin: 0 0 12px; }
+    .svc ul { margin: 0; padding-left: 18px; color: var(--fg); font-size: 15px; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; text-align: center; }
+    .stat { padding: 24px 12px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); }
+    .stat b { display: block; font-size: 34px; font-weight: 900; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .stat span { color: var(--fg-2); font-size: 15px; }
+
+    footer { margin-top: 80px; padding: 30px 0 40px; border-top: 1px solid var(--line); color: var(--fg-2); font-size: 14px; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+    footer a { color: var(--fg); }
+    @media (max-width: 600px) { header { padding-top: 48px; } section { padding-top: 56px; } }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <img class="logo" src="icon.png" alt="">
+    <h1>Agora</h1>
+    <p class="tagline"><span>Slack, Mattermost and Rocket.Chat</span> in one fast, light Windows app.</p>
+    <p class="sub">One Home and one search across every workspace you are in, with fine-tunable notifications and your
+      history kept in an encrypted archive on your PC.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/nicoborghi/agora/releases">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
+        Download for Windows</a>
+      <a class="btn" href="https://github.com/nicoborghi/agora">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></svg>
+        Source on GitHub</a>
+    </div>
+    <p class="note">Beta · Windows 10 and 11 · free and open source (GPLv3)</p>
+    <div class="shot"><img src="screenshot.png" alt="Agora with Slack, Mattermost and Rocket.Chat workspaces in one sidebar, a conversation and a profile open" width="2880" height="1800"></div>
+  </header>
+
+  <section class="wrap">
+    <h2>More than three apps in one window</h2>
+    <p class="lead">Agora is not a wrapper that stacks web apps in tabs. It talks to each service through its API and
+      builds what no official client has: features that work across all your workspaces.</p>
+    <div class="grid">
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg></div>
+        <h3>One Home for everything</h3><p>A card per workspace, in its own colour, with what is new and who mentioned you. <i>All conversations</i> puts every workspace in one sidebar.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg></div>
+        <h3>Search across services</h3><p>Every service at once, even offline, from the local archive; ask the servers for older history. <code>from:</code>, <code>in:</code>, phrases and a date filter work everywhere.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
+        <h3>Fine-tunable notifications</h3><p>Alert, Dot or Silent, set globally, per workspace and per conversation. Mentions and keywords break through; quiet hours hold the rest.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h7l2 2h7v10H4z"/><path d="M4 7V5h6l2 2"/></svg></div>
+        <h3>Organise across workspaces</h3><p>Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></div>
+        <h3>Your history, encrypted</h3><p>Every message received is kept in a local SQLCipher archive, its key in Windows Credential Manager. Readable and searchable without a connection.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/></svg></div>
+        <h3>People, wherever they are</h3><p>Profiles with title, local time, status and contacts; member lists; click any @mention or #channel to open it.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m13.5 7.5 3 3"/></svg></div>
+        <h3>Writing that feels good</h3><p>Markdown toolbar and shortcuts, @mention and :emoji: completion, pasted images with a built-in editor, and a preview of what others will see.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6z"/></svg></div>
+        <h3>Light on your PC</h3><p>One native shell (Rust and Tauri on WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/></svg></div>
+        <h3>Made to be yours</h3><p>Light, dark or system theme, eight accent colours, three text sizes, compact or wide spacing, Lato or Windows fonts.</p></div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2>Works with</h2>
+    <p class="lead">Sign in the way you always do, single sign-on included. Agora keeps the session in Windows Credential Manager.</p>
+    <div class="services">
+      <div class="svc" style="--c:#8b6cf6"><h3>Slack</h3><p class="how">Your usual login; every workspace of that session at once.</p>
+        <ul><li>Messages, threads, reactions, files</li><li>Sidebar sections and Starred</li><li>Profiles, members, server search</li></ul></div>
+      <div class="svc" style="--c:#38c8f0"><h3>Mattermost</h3><p class="how">SSO, GitLab, password with MFA, or a personal token.</p>
+        <ul><li>Several teams and custom categories</li><li>Two-way favourites, read state synced</li><li>Profiles, members, server search</li></ul></div>
+      <div class="svc" style="--c:#e85aa8"><h3>Rocket.Chat</h3><p class="how">Login window with SSO and 2FA, or a personal token.</p>
+        <ul><li>Teams and discussions</li><li>Two-way favourites</li><li>Profiles, members, server search</li></ul></div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="stats">
+      <div class="stat"><b>3</b><span>services, one window</span></div>
+      <div class="stat"><b>~100 MB</b><span>memory with several workspaces</span></div>
+      <div class="stat"><b>0</b><span>embedded browsers per service</span></div>
+      <div class="stat"><b>GPLv3</b><span>free and open source</span></div>
+    </div>
+    <div class="cta" style="margin-top:40px">
+      <a class="btn primary" href="https://github.com/nicoborghi/agora/releases">Get the beta</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span>Agora · © 2026 Nicola Borghi · <a href="https://github.com/nicoborghi/agora/blob/main/LICENSE">GPLv3</a></span>
+      <span>Slack, Mattermost and Rocket.Chat are trademarks of their owners; Agora is not affiliated with them.</span>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,41 @@
+name: Release
+
+# Tag a commit on main to publish a release with the Windows installer:
+#   git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1
+# Tags with a hyphen (v0.1.0-beta.1) are marked as pre-releases.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ilammy/setup-nasm@v1
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # For signed auto-updates later: add these two repository secrets and set
+          # bundle.createUpdaterArtifacts in tauri.conf.json; latest.json is then published too.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Agora ${{ github.ref_name }}
+          releaseBody: |
+            Windows installer below (per-user install, no admin rights needed).
+            See the README for what is new and how to sign in to your workspaces.
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true

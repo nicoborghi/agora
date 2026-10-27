@@ -1,0 +1,23 @@
+name: CI
+
+# Work happens on develop; main only changes through pull requests that pass this check.
+on:
+  push:
+    branches: [develop]
+    # The website (docs/) and Markdown files need no tests.
+    paths-ignore: ["docs/**", "**.md"]
+  # Always runs on pull requests, so the required check is never left waiting.
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # SQLCipher builds a vendored OpenSSL, which wants NASM on Windows.
+      - uses: ilammy/setup-nasm@v1
+      - name: Tests
+        run: cargo test --workspace --locked

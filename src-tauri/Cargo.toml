@@ -1,0 +1,27 @@
+[package]
+name = "agora"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+agora-core = { path = "../crates/agora-core", default-features = false, features = ["demo"] }
+agora-mattermost = { path = "../crates/agora-mattermost" }
+agora-rocketchat = { path = "../crates/agora-rocketchat" }
+agora-slack = { path = "../crates/agora-slack" }
+tauri = { version = "2", features = ["tray-icon"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = "0.3"
+
+[features]
+default = ["sqlcipher"]
+sqlcipher = ["agora-core/sqlcipher"]
+# Fallback if the SQLCipher/OpenSSL build gives trouble: `npm run tauri dev -- --no-default-features --features plain-sqlite`
+plain-sqlite = ["agora-core/plain-sqlite"]

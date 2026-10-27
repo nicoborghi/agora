@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window and notification popup",
+  "windows": ["main", "popup"],
+  "permissions": ["core:default"]
+}

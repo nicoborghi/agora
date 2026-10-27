@@ -1,0 +1,4 @@
+# The vendored OpenSSL static library ships without its .pdb debug file, so the MSVC linker
+# prints one LNK4099 warning per object (hundreds). They are harmless: silence them.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/IGNORE:4099"]

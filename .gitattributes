@@ -1,0 +1,8 @@
+# Keep line endings as LF in the repository; never touch binary assets.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.wav binary
+*.woff2 binary
+*.rgba binary
+*.ps1 text eol=crlf

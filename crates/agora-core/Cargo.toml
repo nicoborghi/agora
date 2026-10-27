@@ -1,0 +1,28 @@
+[package]
+name = "agora-core"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+default = ["sqlcipher", "demo"]
+# Encrypted archive. On Windows this builds a vendored OpenSSL, which needs Strawberry Perl.
+sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Unencrypted fallback: build the app with `--no-default-features --features plain-sqlite`.
+plain-sqlite = ["rusqlite/bundled"]
+# Offline fake workspace used to test the UI, notifications and tray without real accounts.
+demo = []
+
+[dependencies]
+rusqlite = "0.32"
+keyring = { version = "3", features = ["windows-native"] }
+getrandom = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+fastrand.workspace = true
