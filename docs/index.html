@@ -15,7 +15,7 @@
   <style>
     :root {
       --bg: #0b0e1d; --bg-2: #12162b; --card: #151a33; --line: #262c4d; --fg: #eef0fb; --fg-2: #a3a9c9;
-      --cyan: #38c8f0; --violet: #8b6cf6; --magenta: #e85aa8;
+      --cyan: #6db3c9; --violet: #8f86c9; --magenta: #c08aa8;
       --grad: linear-gradient(110deg, var(--cyan), var(--violet) 50%, var(--magenta));
     }
     * { box-sizing: border-box; }
@@ -27,10 +27,10 @@
     /* Hero */
     header { position: relative; padding: 72px 0 40px; text-align: center; }
     header::before { content: ""; position: absolute; inset: -200px 0 auto; height: 620px; z-index: -1;
-      background: radial-gradient(600px 300px at 30% 30%, #38c8f033, transparent 70%),
-                  radial-gradient(600px 300px at 70% 40%, #e85aa82e, transparent 70%),
-                  radial-gradient(500px 260px at 50% 60%, #8b6cf640, transparent 70%); }
-    .logo { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 12px 40px #8b6cf655; }
+      background: radial-gradient(600px 300px at 30% 30%, #6db3c92a, transparent 70%),
+                  radial-gradient(600px 300px at 70% 40%, #c08aa826, transparent 70%),
+                  radial-gradient(500px 260px at 50% 60%, #8f86c933, transparent 70%); }
+    .logo { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 12px 40px #8f86c940; }
     h1 { font-size: clamp(40px, 7vw, 68px); font-weight: 900; letter-spacing: -.02em; margin: 18px 0 6px; }
     .tagline { font-size: clamp(20px, 2.6vw, 26px); font-weight: 700; margin: 0 auto; max-width: 760px; }
     .tagline span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -39,12 +39,12 @@
     .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 12px; font-weight: 700;
       text-decoration: none; border: 1px solid var(--line); background: var(--bg-2); transition: transform .15s, border-color .15s; }
     .btn:hover { transform: translateY(-1px); border-color: var(--fg-2); }
-    .btn.primary { border: 0; background: var(--grad); color: #fff; box-shadow: 0 10px 30px #8b6cf655; }
+    .btn.primary { border: 0; background: var(--grad); color: #fff; box-shadow: 0 10px 30px #8f86c940; }
     .btn svg { width: 18px; height: 18px; }
     .note { color: var(--fg-2); font-size: 14px; margin-top: 12px; }
 
     /* Screenshot */
-    .shot { margin: 44px auto 0; max-width: 1060px; border-radius: 16px; padding: 1px; background: linear-gradient(140deg, #38c8f066, #8b6cf644, #e85aa866);
+    .shot { margin: 44px auto 0; max-width: 1060px; border-radius: 16px; padding: 1px; background: linear-gradient(140deg, #6db3c955, #8f86c93a, #c08aa855);
       box-shadow: 0 40px 100px #000a, 0 0 0 1px #ffffff0d; }
     .shot img { display: block; width: 100%; height: auto; border-radius: 15px; }
 
@@ -56,7 +56,7 @@
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 20px; }
     .card h3 { margin: 12px 0 6px; font-size: 19px; }
     .card p { margin: 0; color: var(--fg-2); font-size: 15.5px; }
-    .ico { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: #8b6cf622; color: #c4b5fd; }
+    .ico { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: #8f86c922; color: #c3bdea; }
     .ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
     .services { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
@@ -126,11 +126,11 @@
     <h2>Works with</h2>
     <p class="lead">Sign in the way you always do, single sign-on included. Agora keeps the session in Windows Credential Manager.</p>
     <div class="services">
-      <div class="svc" style="--c:#8b6cf6"><h3>Slack</h3><p class="how">Your usual login; every workspace of that session at once.</p>
+      <div class="svc" style="--c:#8f86c9"><h3>Slack</h3><p class="how">Your usual login; every workspace of that session at once.</p>
         <ul><li>Messages, threads, reactions, files</li><li>Sidebar sections and Starred</li><li>Profiles, members, server search</li></ul></div>
-      <div class="svc" style="--c:#38c8f0"><h3>Mattermost</h3><p class="how">SSO, GitLab, password with MFA, or a personal token.</p>
+      <div class="svc" style="--c:#6db3c9"><h3>Mattermost</h3><p class="how">SSO, GitLab, password with MFA, or a personal token.</p>
         <ul><li>Several teams and custom categories</li><li>Two-way favourites, read state synced</li><li>Profiles, members, server search</li></ul></div>
-      <div class="svc" style="--c:#e85aa8"><h3>Rocket.Chat</h3><p class="how">Login window with SSO and 2FA, or a personal token.</p>
+      <div class="svc" style="--c:#c08aa8"><h3>Rocket.Chat</h3><p class="how">Login window with SSO and 2FA, or a personal token.</p>
         <ul><li>Teams and discussions</li><li>Two-way favourites</li><li>Profiles, members, server search</li></ul></div>
     </div>
   </section>

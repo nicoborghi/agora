@@ -1,8 +1,8 @@
 param([string]$OutDir)
 # Regenerate every icon: powershell -File src-tauri/icons/make-icons.ps1 -OutDir src-tauri/icons
 # (also writes preview-16/24.png for checking legibility; delete them afterwards).
-# Agora: streams flowing into one conversation. Two ribbons sweep into a modern chat bubble with
-# a spark where they meet; one cool gradient (cyan, violet, magenta) on a midnight tile.
+# Agora: streams flowing into one conversation. Two ribbons sweep into a modern chat bubble;
+# a muted gradient (dusty cyan, violet, rose) on a deep slate tile. No glow, no spark.
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
@@ -24,7 +24,7 @@ function RoundRect($x, $y, $w, $h, $r) {
 function Spectrum($x1, $y1, $x2, $y2, $a = 255) {
     $b = New-Object System.Drawing.Drawing2D.LinearGradientBrush (P $x1 $y1), (P $x2 $y2), (C '#000000'), (C '#000000')
     $blend = New-Object System.Drawing.Drawing2D.ColorBlend 3
-    $blend.Colors = @((C '#38c8f0' $a), (C '#8b6cf6' $a), (C '#e85aa8' $a))
+    $blend.Colors = @((C '#6db3c9' $a), (C '#8f86c9' $a), (C '#c08aa8' $a))
     $blend.Positions = @(0.0, 0.5, 1.0)
     $b.InterpolationColors = $blend
     return $b
@@ -48,13 +48,13 @@ function New-Icon([int]$size) {
     $s = $size / 32.0
 
     $tile = RoundRect (1*$s) (1*$s) (30*$s) (30*$s) (7*$s)
-    $night = New-Object System.Drawing.Drawing2D.LinearGradientBrush (P 0 0), (P $size $size), (C '#1e2650'), (C '#0b0f24')
+    $night = New-Object System.Drawing.Drawing2D.LinearGradientBrush (P 0 0), (P $size $size), (C '#23273a'), (C '#131623')
     $g.FillPath($night, $tile)
     $g.SetClip($tile)
 
     # Ribbons sweeping in from the top left and the bottom right.
-    $g.FillPath((Spectrum (0) (4*$s) (18*$s) (12*$s) 235), (Ribbon $s @(-1, 16) @(3, 8.2) @(9, 5.6) @(15, 7.5) @(9.5, 8.6) @(4.5, 11.5) @(-1, 19.5)))
-    $g.FillPath((Spectrum (14*$s) (20*$s) (33*$s) (26*$s) 235), (Ribbon $s @(33, 16) @(29, 23.8) @(23, 26.4) @(17, 22) @(22.5, 23.4) @(27.5, 20.5) @(33, 12.5)))
+    $g.FillPath((Spectrum (0) (4*$s) (18*$s) (12*$s) 205), (Ribbon $s @(-1, 16) @(3, 8.2) @(9, 5.6) @(15, 7.5) @(9.5, 8.6) @(4.5, 11.5) @(-1, 19.5)))
+    $g.FillPath((Spectrum (14*$s) (20*$s) (33*$s) (26*$s) 205), (Ribbon $s @(33, 16) @(29, 23.8) @(23, 26.4) @(17, 22) @(22.5, 23.4) @(27.5, 20.5) @(33, 12.5)))
 
     # The bubble: a gradient shape with its inside cut back to the tile colour.
     $outer = New-Object System.Drawing.Drawing2D.GraphicsPath
@@ -68,17 +68,6 @@ function New-Icon([int]$size) {
     $inner.FillMode = [System.Drawing.Drawing2D.FillMode]::Winding
     $g.FillPath($night, $inner)
 
-    # Soft light inside, and a four-pointed spark where the streams meet.
-    $glow = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $glow.AddEllipse((10*$s), (8.6*$s), (12*$s), (12*$s))
-    $pgb = New-Object System.Drawing.Drawing2D.PathGradientBrush $glow
-    $pgb.CenterColor = C '#b9a6ff' 110
-    $pgb.SurroundColors = @((C '#b9a6ff' 0))
-    $g.FillPath($pgb, $glow)
-    $cx = 16; $cy = 14.6; $r = 3.4; $w = 0.85
-    $spark = @((P ($cx*$s) (($cy-$r)*$s)), (P (($cx+$w)*$s) (($cy-$w)*$s)), (P (($cx+$r)*$s) ($cy*$s)), (P (($cx+$w)*$s) (($cy+$w)*$s)),
-               (P ($cx*$s) (($cy+$r)*$s)), (P (($cx-$w)*$s) (($cy+$w)*$s)), (P (($cx-$r)*$s) ($cy*$s)), (P (($cx-$w)*$s) (($cy-$w)*$s)))
-    $g.FillPolygon((New-Object System.Drawing.SolidBrush (C '#f4f0ff')), $spark)
     $g.ResetClip()
     $g.Dispose()
     return $bmp
