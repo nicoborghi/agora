@@ -12,6 +12,11 @@ on:
   push:
     branches: [develop, main]
 
+# A new push cancels a run still going on the same branch: only the newest code is tested.
+concurrency:
+  group: builds-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     if: github.ref == 'refs/heads/develop'
