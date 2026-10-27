@@ -1,15 +1,14 @@
 name: CI
 
-# Work happens on develop; main only changes through pull requests that pass this check, and is
-# checked again after each merge (that is the status the README badge shows).
+# One run per commit: every push to develop is tested. main only changes through pull requests from
+# develop, whose latest commit already carries this "test" check, which is what the branch rule on
+# main requires. (No pull_request trigger: a skipped run would count as passed and let a failing
+# commit through. Contributions from forks go to develop first and are tested there.)
+# Every push runs, website-only ones included: the latest commit of a pull request must carry the
+# check, or the merge stays blocked. The installer is built only from tags (release.yml).
 on:
   push:
-    branches: [develop, main]
-    # The website (docs/) and Markdown files need no tests.
-    paths-ignore: ["docs/**", "**.md"]
-  # Always runs on pull requests, so the required check is never left waiting.
-  pull_request:
-    branches: [main]
+    branches: [develop]
 
 jobs:
   test:
