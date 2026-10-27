@@ -182,6 +182,22 @@ pub async fn search_messages(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn get_bookmarks(state: State<'_, AppState>) -> CmdResult<Vec<MessageView>> {
+    state.engine.bookmarks()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_bookmark(
+    state: State<'_, AppState>,
+    account_id: String,
+    channel_id: String,
+    message_id: String,
+    on: bool,
+) -> CmdResult<()> {
+    state.engine.set_bookmark(&account_id, &channel_id, &message_id, on)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_me(state: State<'_, AppState>, account_id: String) -> CmdResult<Option<SelfView>> {
     state.engine.me(&account_id)
 }

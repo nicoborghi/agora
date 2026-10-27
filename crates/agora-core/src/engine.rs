@@ -882,6 +882,26 @@ impl Engine {
         }
     }
 
+    /// Bookmarks are local to Agora (the archive), across every account.
+    pub fn set_bookmark(&self, acc: &str, ch: &str, id: &str, on: bool) -> Result<(), String> {
+        self.store.set_bookmark(acc, ch, id, on, now_ms()).map_err(err)
+    }
+
+    /// Bookmarked messages, most recently bookmarked first.
+    pub fn bookmarks(&self) -> Result<Vec<MessageView>, String> {
+        let mut self_ids: HashMap<String, Option<String>> = HashMap::new();
+        Ok(self
+            .store
+            .bookmarks()
+            .map_err(err)?
+            .into_iter()
+            .map(|a| {
+                let me = self_ids.entry(a.message.account_id.clone()).or_insert_with(|| self.self_id(&a.message.account_id));
+                MessageView::new(a, me.as_deref())
+            })
+            .collect())
+    }
+
     pub async fn thread(&self, acc: &str, ch: &str, root: &str) -> Result<Vec<MessageView>, String> {
         if let Some(svc) = self.service(acc) {
             match svc.thread(ch, root).await {

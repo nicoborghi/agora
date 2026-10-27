@@ -31,8 +31,8 @@ Agora is not a wrapper that stacks web apps in different tabs. It talks to each 
 - **One Home for everything.** Workspace cards with new messages and mentions. *All conversations* from every workspace in one sidebar.
 - **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
 - **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
-- **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it.
-- **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), and a preview of what others will see.
+- **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it, and bookmarks collect messages from every workspace on one page.
+- **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
 - **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
 
 

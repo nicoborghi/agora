@@ -727,3 +727,32 @@ input[type="range"] { accent-color: var(--accent); }
 .accent-choice.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .accent-choice i { background: var(--sw-d); } }
 :root[data-theme="dark"] .accent-choice i { background: var(--sw-d); }
+
+/* Emoji picker: search, a tab per category, then the open tab's emoji. */
+.emoji-picker { display: grid; gap: 6px; width: 304px; }
+.emoji-picker .emoji-search { width: 100%; }
+.emoji-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.emoji-tabs button { flex: 1; height: 28px; border-radius: var(--radius); font-size: 16px; opacity: .55; }
+.emoji-tabs button:hover { background: var(--bg-3); opacity: 1; }
+.emoji-tabs button.on { background: var(--sel-bg); opacity: 1; }
+.emoji-picker .emoji-grid.wide { grid-template-columns: repeat(10, 28px); height: 248px; max-height: none; align-content: start; }
+.emoji-picker .muted { grid-column: 1 / -1; margin: 8px 4px; font-size: 12px; }
+
+/* Drafts: a pencil beside conversations with unsent text. */
+.draft-mark { display: grid; place-items: center; flex: none; color: var(--accent); }
+.draft-mark .i { width: 12px; height: 12px; }
+
+/* Bookmarks: a thin stripe on bookmarked messages, and the Bookmarks page. */
+.msg.bookmarked { box-shadow: inset 3px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
+.msg-tools .icon-btn.on { color: var(--accent); }
+.bm-list { display: grid; gap: 12px; max-width: 860px; }
+.bm-item { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); overflow: hidden; }
+.bm-msg .msg-tools { display: none; }
+.bm-msg .msg.bookmarked { box-shadow: none; }
+.bm-where { display: flex; align-items: center; gap: 7px; padding: 8px 14px; background: var(--bg-2); border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.bm-where .svc-logo { flex: none; width: 16px; height: 16px; border-radius: 4px; object-fit: cover; }
+.bm-where .svc { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.bm-where time { margin-left: auto; color: var(--fg-2); font-size: 11.5px; }
+.bm-msg .msg { padding-top: 8px; padding-bottom: 8px; }
+.bm-actions { display: flex; gap: 8px; padding: 0 14px 12px; }
+.bm-actions .btn .i { width: 13px; height: 13px; }
