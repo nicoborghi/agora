@@ -846,7 +846,12 @@ function messagesHtml(list, inThread, newSince = null) {
   for (const m of list) {
     const d = new Date(m.ts).toDateString();
     if (d !== day) {
-      if (!inThread) out += `<div class="day">${fmtDay(m.ts)}</div>`;
+      // Each day is a group, so its date line stays pinned at the top only while that day is
+      // on screen. Today's line scrolls normally.
+      if (!inThread) {
+        const today = d === new Date().toDateString();
+        out += `${day ? '</section>' : ''}<section class="day-group"><div class="day ${today ? 'today' : ''}"><span>${fmtDay(m.ts)}</span></div>`;
+      }
       day = d;
       prev = null;
     }
@@ -861,7 +866,7 @@ function messagesHtml(list, inThread, newSince = null) {
     out += dividerShown && fresh ? html.replace('class="msg ', 'class="msg fresh ') : html;
     prev = m;
   }
-  return out;
+  return !inThread && day ? `${out}</section>` : out;
 }
 
 /**

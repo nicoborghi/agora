@@ -184,7 +184,15 @@ pub struct Engine {
     pending_reads: Arc<Mutex<HashMap<Key, Message>>>,
     /// Conversations whose full server history is already local.
     exhausted: Mutex<HashSet<Key>>,
+    /// Pages of the archive checked against the service recently (conversation, `before`),
+    /// so reopening or reloading a conversation does not ask again within a short time.
+    verified: Mutex<HashMap<(Key, Option<Millis>), Instant>>,
 }
+
+/// How often the same archive page is checked against the service.
+const VERIFY_EVERY: Duration = Duration::from_secs(30);
+/// Pages fetched to close one gap; older ones are filled while scrolling up.
+const MAX_GAP_PAGES: usize = 5;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -227,6 +235,7 @@ impl Engine {
             view: Mutex::default(),
             pending_reads: Arc::default(),
             exhausted: Mutex::default(),
+            verified: Mutex::default(),
         })
     }
 
@@ -756,8 +765,10 @@ impl Engine {
     }
 
     /// One page of top-level messages; falls back to the service when the archive runs out.
+    /// A full page from the archive is shown at once and checked against the service in the
+    /// background, because the archive can have gaps (see [`Self::fill_gap`]).
     pub async fn messages(
-        &self,
+        self: &Arc<Self>,
         acc: &str,
         ch: &str,
         before: Option<Millis>,
@@ -766,7 +777,25 @@ impl Engine {
         let mut local = self.store.messages(acc, ch, before, limit).map_err(err)?;
         let key = (acc.to_string(), ch.to_string());
         let exhausted = lock(&self.exhausted).contains(&key);
-        if (local.len() as u32) < limit && !exhausted {
+        if (local.len() as u32) >= limit || exhausted {
+            if let Some(svc) = self.service(acc) {
+                let fresh = {
+                    let mut v = lock(&self.verified);
+                    let page = (key.clone(), before);
+                    let recent = v.get(&page).is_some_and(|t| t.elapsed() < VERIFY_EVERY);
+                    if !recent {
+                        v.insert(page, Instant::now());
+                    }
+                    !recent
+                };
+                if fresh {
+                    let before_id = before.and_then(|ts| self.store.message_id_at(acc, ch, ts).ok().flatten());
+                    let me = self.clone();
+                    let (acc, ch) = key.clone();
+                    self.spawn(async move { me.fill_gap(acc, ch, svc, before, before_id, limit).await });
+                }
+            }
+        } else {
             if let Some(svc) = self.service(acc) {
                 let (oldest, oldest_id) = match local.first() {
                     Some(a) => (Some(a.message.ts), Some(a.message.id.clone())),
@@ -793,6 +822,64 @@ impl Engine {
             .into_iter()
             .map(|a| MessageView::new(a, self_id.as_deref()))
             .collect())
+    }
+
+    /// Fetches the page before `before` (the newest page when `None`) from the service and stores
+    /// the messages the archive lacks. The archive can have gaps: conversations the catch-up
+    /// skipped, or time Agora was closed, where live messages sit on top of older ones with
+    /// nothing in between. While whole pages are new, keeps going back until it meets messages
+    /// the archive has. Refreshes the open conversation when anything was added.
+    async fn fill_gap(
+        self: Arc<Self>,
+        acc: String,
+        ch: String,
+        svc: Arc<dyn Service>,
+        mut before: Option<Millis>,
+        mut before_id: Option<String>,
+        limit: u32,
+    ) {
+        let mut added = 0;
+        let mut pages = 0;
+        while pages < MAX_GAP_PAGES {
+            let query = HistoryQuery { before, before_id: before_id.clone(), limit, ..Default::default() };
+            let remote = match svc.history(&ch, query).await {
+                Ok(r) => r,
+                Err(ServiceError::RateLimited(d)) => {
+                    tokio::time::sleep(d).await;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::debug!(account = %acc, channel = %ch, "history check skipped: {e}");
+                    break;
+                }
+            };
+            pages += 1;
+            let ids: Vec<String> = remote.iter().map(|m| m.id.clone()).collect();
+            let missing = match self.store.missing_messages(&acc, &ch, &ids) {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            if missing == 0 {
+                break;
+            }
+            if let Err(e) = self.store_history(&acc, &ch, &remote) {
+                tracing::warn!(account = %acc, "history not stored: {e}");
+                break;
+            }
+            self.fill_users(&acc, &svc, &remote).await;
+            added += missing;
+            // Part of the page was known (the gap is closed), or the service has nothing older.
+            if missing < remote.len() || (remote.len() as u32) < limit {
+                break;
+            }
+            // Oldest first: continue below the oldest message of this page.
+            before = remote.first().map(|m| m.ts);
+            before_id = remote.first().map(|m| m.id.clone());
+        }
+        if added > 0 {
+            tracing::info!(account = %acc, channel = %ch, added, "filled a gap in the archive");
+            self.frontend.emit(UiEvent::History { account_id: acc, channel_id: ch });
+        }
     }
 
     pub async fn thread(&self, acc: &str, ch: &str, root: &str) -> Result<Vec<MessageView>, String> {

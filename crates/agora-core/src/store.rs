@@ -799,6 +799,19 @@ impl Store {
         Ok(out)
     }
 
+    /// How many of these message ids the archive does not have yet.
+    pub fn missing_messages(&self, acc: &str, ch: &str, ids: &[String]) -> StoreResult<usize> {
+        let db = self.db();
+        let mut st = db.prepare_cached("SELECT 1 FROM messages WHERE account_id = ?1 AND channel_id = ?2 AND id = ?3")?;
+        let mut n = 0;
+        for id in ids {
+            if !st.exists(params![acc, ch, id])? {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
     /// (id, display name, picture URL) for each id; unknown people get their id as name.
     pub fn user_cards(&self, acc: &str, ids: &[String]) -> StoreResult<Vec<(String, String, Option<String>)>> {
         let db = self.db();
@@ -1014,6 +1027,16 @@ mod tests {
         assert_eq!(older, vec!["1"]);
         let thread: Vec<String> = s.thread("a", "c", "1").unwrap().into_iter().map(|a| a.message.id).collect();
         assert_eq!(thread, vec!["1", "3"]);
+    }
+
+    #[test]
+    fn missing_messages_counts_unknown_ids() {
+        let s = temp_store();
+        s.upsert_messages(&[msg("1", 10, None), msg("2", 20, None)]).unwrap();
+        let ids = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(s.missing_messages("a", "c", &ids(&["1", "2"])).unwrap(), 0);
+        assert_eq!(s.missing_messages("a", "c", &ids(&["2", "3", "4"])).unwrap(), 2);
+        assert_eq!(s.missing_messages("a", "other", &ids(&["1"])).unwrap(), 1);
     }
 
     #[test]
