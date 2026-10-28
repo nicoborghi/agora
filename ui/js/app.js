@@ -906,11 +906,39 @@ function fmtDay(ts) {
   return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
 }
 
+/** "Ada Lovelace, Grace Hopper and you": who reacted, you last. */
+function reactorNames(m, r) {
+  const me = account(m.account_id)?.self_user_id;
+  const names = r.users.filter((u) => u !== me).map((u) => m.reactors?.[u]?.name || 'someone');
+  if (r.users.includes(me)) names.push('you');
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] || '';
+}
+
 function reactionsHtml(m) {
   if (!m.reactions?.length) return '';
   const me = account(m.account_id)?.self_user_id;
   return `<div class="reactions">${m.reactions.map((r) => `<button class="reaction ${r.users.includes(me) ? 'mine' : ''}"
-    data-act="toggle-reaction" data-emoji="${esc(r.emoji)}" title=":${esc(r.emoji)}:">${emoji(r.emoji)} ${r.users.length}</button>`).join('')}</div>`;
+    data-act="toggle-reaction" data-emoji="${esc(r.emoji)}" title=":${esc(r.emoji)}: ${esc(reactorNames(m, r))} (right-click for the list)">${emoji(r.emoji)} ${r.users.length}</button>`).join('')}</div>`;
+}
+
+/** Everyone who reacted with one emoji, with their picture; a name opens their profile. */
+function showReactors(anchor, m, name, inPanel) {
+  const r = m.reactions?.find((x) => x.emoji === name);
+  if (!r) return;
+  const me = account(m.account_id)?.self_user_id;
+  const rows = r.users.map((u) => {
+    const p = m.reactors?.[u];
+    const shown = u === me ? `${p?.name || 'You'} (you)` : p?.name || 'Someone';
+    return `<button data-person="${esc(u)}">${avatarHtml({ avatar_url: p?.avatar }, p?.name || '?', undefined, 'xs')}<span>${esc(shown)}</span></button>`;
+  }).join('');
+  showPopover(anchor, `<div class="menu reactors"><div class="menu-label">${emoji(name)} :${esc(name)}: · ${r.users.length}</div>${rows}</div>`, (pop) => {
+    pop.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-person]');
+      if (!b) return;
+      closePopover();
+      openPerson(m.account_id, b.dataset.person, inPanel ? S.panel : null);
+    });
+  });
 }
 
 function attachmentsHtml(m) {
@@ -2432,6 +2460,16 @@ function bindUi() {
 
   const box = $('#messages');
   box.addEventListener('click', (e) => onMessageAreaClick(e, false));
+  // Right-click on a reaction lists who reacted; on both the conversation and the side panel.
+  const reactorsMenu = (inPanel) => (e) => {
+    const r = e.target.closest('[data-act="toggle-reaction"]');
+    const m = r && findMessage(e.target.closest('.msg')?.dataset.id, inPanel);
+    if (!m) return;
+    e.preventDefault();
+    showReactors(r, m, r.dataset.emoji, inPanel);
+  };
+  box.addEventListener('contextmenu', reactorsMenu(false));
+  $('#panel').addEventListener('contextmenu', reactorsMenu(true));
   box.addEventListener('scroll', loadOlder, { passive: true });
   // Following the bottom stops when the reader scrolls up, and resumes at the bottom.
   box.addEventListener('scroll', () => { S.stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60; }, { passive: true });

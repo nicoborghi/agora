@@ -48,6 +48,15 @@ pub struct MessageView {
     /// Profile picture URL (https, or the `agora` scheme for pictures that need the account's token).
     pub author_avatar: Option<String>,
     pub is_self: bool,
+    /// Who reacted (user id -> name and picture), so the UI can say who.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub reactors: HashMap<String, Reactor>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Reactor {
+    pub name: String,
+    pub avatar: Option<String>,
 }
 
 impl MessageView {
@@ -57,6 +66,7 @@ impl MessageView {
             author_name: a.name,
             author_avatar: a.avatar,
             message: a.message,
+            reactors: HashMap::new(),
         }
     }
 }
@@ -703,7 +713,36 @@ impl Engine {
             None => m.author_id.clone(),
         };
         let is_self = self.self_id(&m.account_id).as_deref() == Some(m.author_id.as_str());
-        Ok(MessageView { author_avatar: user.and_then(|u| u.avatar_url), message: m, author_name, is_self })
+        let view = MessageView { author_avatar: user.and_then(|u| u.avatar_url), message: m, author_name, is_self, reactors: HashMap::new() };
+        Ok(self.with_reactors(vec![view]).pop().expect("one view in, one out"))
+    }
+
+    /// Fills in who reacted, with one archive lookup per account for the whole list.
+    fn with_reactors(&self, mut views: Vec<MessageView>) -> Vec<MessageView> {
+        let mut wanted: HashMap<String, Vec<String>> = HashMap::new();
+        for v in &views {
+            for r in &v.message.reactions {
+                wanted.entry(v.message.account_id.clone()).or_default().extend(r.users.iter().cloned());
+            }
+        }
+        let mut cards: HashMap<(String, String), Reactor> = HashMap::new();
+        for (acc, mut ids) in wanted {
+            ids.sort();
+            ids.dedup();
+            for (id, name, avatar) in self.store.user_cards(&acc, &ids).unwrap_or_default() {
+                cards.insert((acc.clone(), id), Reactor { name, avatar });
+            }
+        }
+        for v in &mut views {
+            for r in &v.message.reactions {
+                for u in &r.users {
+                    if let Some(c) = cards.get(&(v.message.account_id.clone(), u.clone())) {
+                        v.reactors.insert(u.clone(), c.clone());
+                    }
+                }
+            }
+        }
+        views
     }
 
     fn emit_message(&self, m: Message) -> StoreResult<()> {
@@ -818,10 +857,7 @@ impl Engine {
             }
         }
         let self_id = self.self_id(acc);
-        Ok(local
-            .into_iter()
-            .map(|a| MessageView::new(a, self_id.as_deref()))
-            .collect())
+        Ok(self.with_reactors(local.into_iter().map(|a| MessageView::new(a, self_id.as_deref())).collect()))
     }
 
     /// Fetches the page before `before` (the newest page when `None`) from the service and stores
@@ -899,7 +935,8 @@ impl Engine {
                 let me = self_ids.entry(a.message.account_id.clone()).or_insert_with(|| self.self_id(&a.message.account_id));
                 MessageView::new(a, me.as_deref())
             })
-            .collect())
+            .collect::<Vec<_>>())
+        .map(|views| self.with_reactors(views))
     }
 
     pub async fn thread(&self, acc: &str, ch: &str, root: &str) -> Result<Vec<MessageView>, String> {
@@ -913,13 +950,9 @@ impl Engine {
             }
         }
         let self_id = self.self_id(acc);
-        Ok(self
-            .store
-            .thread(acc, ch, root)
-            .map_err(err)?
-            .into_iter()
-            .map(|a| MessageView::new(a, self_id.as_deref()))
-            .collect())
+        Ok(self.with_reactors(
+            self.store.thread(acc, ch, root).map_err(err)?.into_iter().map(|a| MessageView::new(a, self_id.as_deref())).collect(),
+        ))
     }
 
     /// The UI opened a conversation (or closed all with `None`).
@@ -1134,10 +1167,9 @@ impl Engine {
             limit,
         };
         let hits = self.store.search(&filter).map_err(err)?;
-        Ok(hits
-            .into_iter()
-            .map(|a| { let me = self.self_id(&a.message.account_id); MessageView::new(a, me.as_deref()) })
-            .collect())
+        Ok(self.with_reactors(
+            hits.into_iter().map(|a| { let me = self.self_id(&a.message.account_id); MessageView::new(a, me.as_deref()) }).collect(),
+        ))
     }
 
     /// Asks the services themselves (older history the archive does not have). Results are

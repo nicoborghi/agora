@@ -427,6 +427,7 @@ mark { background: color-mix(in srgb, #f2c94c 55%, transparent); color: inherit;
 .menu button .presence { position: static; width: 9px; height: 9px; margin: 0 2px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
 .menu-label { font-size: 11px; color: var(--fg-2); padding: 2px 8px; }
+.menu.reactors { max-height: 320px; overflow-y: auto; }
 .menu-head { display: flex; align-items: center; gap: 10px; padding: 4px 6px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .menu-new { display: flex; gap: 4px; padding: 4px 4px 2px; }
 .menu-new input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 3px 6px; outline: 0; }
