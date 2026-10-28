@@ -66,6 +66,17 @@ fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// Whether the end of `before` is inside a ``` block or an inline `code` span.
+fn in_code(before: &str) -> bool {
+    let fences = before.matches("```").count();
+    if fences % 2 == 1 {
+        return true;
+    }
+    let after_fence = before.rsplit("```").next().unwrap_or(before);
+    let line = after_fence.rsplit('\n').next().unwrap_or(after_fence);
+    line.matches('`').count() % 2 == 1
+}
+
 /// mrkdwn → Markdown. `name_of` resolves user ids for `<@U123>` and conversation ids for
 /// `<#C123>`; returns the text and the
 /// user ids it mentions ([`MENTION_ALL`] for @here / @channel / @everyone).
@@ -105,6 +116,12 @@ pub fn from_slack(text: &str, name_of: &dyn Fn(&str) -> Option<String>) -> (Stri
         } else {
             let url = unescape(target);
             let shown = url.trim_start_matches("mailto:");
+            // Slack links domains even inside code (`astropy.io`): keep what was typed there.
+            if in_code(&text[..text.len() - rest.len() + open]) {
+                out.push_str(&label.map(unescape).unwrap_or_else(|| shown.to_string()));
+                rest = &rest[close + 1..];
+                continue;
+            }
             match label.map(unescape) {
                 Some(l) if l != url && l != shown => out.push_str(&format!("[{l}]({url})")),
                 _ => out.push_str(shown),
@@ -437,6 +454,15 @@ mod tests {
         assert_eq!(from_slack("<https://x.org>", &names).0, "https://x.org");
         assert_eq!(from_slack("<@U7>", &names).0, "@U7");
         assert_eq!(from_slack("<@U2|Hervé Aussel> ok", &names).0, "@Hervé\u{a0}Aussel ok");
+    }
+
+    #[test]
+    fn links_in_code_stay_typed() {
+        let none = |_: &str| None;
+        let (t, _) = from_slack("```import <http://astropy.io|astropy.io>```", &none);
+        assert_eq!(t, "```import astropy.io```");
+        let (t, _) = from_slack("use `<http://numpy.org|numpy.org>` or <http://x.org|docs>", &none);
+        assert_eq!(t, "use `numpy.org` or [docs](http://x.org)");
     }
 
     #[test]
