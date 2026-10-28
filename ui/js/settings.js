@@ -156,8 +156,6 @@ function accountCard(a) {
     </div>${panel}</div>`;
 }
 
-const EMOJI_SAMPLE = '\u{1F44D} \u{2764}\u{FE0F} \u{1F602} \u{1F440} \u{1F389} \u{1F680} \u{2705} \u{1F525}';
-
 const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 const VIEWS = {
@@ -253,10 +251,6 @@ const VIEWS = {
         <input type="radio" name="accent" data-path="accent" value="${v}" ${on ? 'checked' : ''}><i></i><span>${l}</span></label>`;
     }).join('')}</div>
     <p class="muted">Used for links, selections, buttons and mentions. Workspace colours stay as they are.</p>
-    <h3>Emoji</h3>
-    <div class="choices">${[['mono', 'Monochrome (default)', 'emoji-mono'], ['system', 'System colour', 'emoji-color']].map(([v, l, cls]) => choice('emoji_style', v, l,
-      // Without the colour selector (U+FE0F) for the monochrome preview, as in messages.
-      `<div class="emoji-preview ${cls}">${v === 'mono' ? EMOJI_SAMPLE.replace(/️/g, '') : EMOJI_SAMPLE}</div>`)).join('')}</div>
     <h3>Text size</h3>
     <div class="choices">${[['small', 'Small'], ['normal', 'Medium (default)'], ['large', 'Large']].map(([v, l]) => choice('sidebar_size', v, l,
       // The window is already zoomed to the current size: scale relative to it, so each
@@ -300,7 +294,8 @@ const VIEWS = {
     ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Updates are signed: only installers signed with Agora\'s key are accepted.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}
     <h3>Build</h3>
     ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
-    ${opt('Version', esc(S.settings.version), '')}`,
+    ${opt('Version', esc(S.settings.version), '')}
+    ${opt('Credits', 'Emoji: Noto Color Emoji by Google, under the SIL Open Font License.', '')}`,
 };
 
 function render() {
@@ -386,7 +381,7 @@ function bind(ov) {
       const v = t.type === 'checkbox' ? t.checked : t.type === 'number' || t.type === 'range' ? Number(t.value) : t.value;
       setPath(t.dataset.path, v);
       if (t.dataset.path === 'sidebar_width') resetSidebarWidth();
-      if (['theme', 'accent', 'emoji_style', 'sidebar_size', 'sidebar_width', 'font'].includes(t.dataset.path)) applyTheme();
+      if (['theme', 'accent', 'sidebar_size', 'sidebar_width', 'font'].includes(t.dataset.path)) applyTheme();
       if (t.type === 'radio') render();
       if (t.dataset.path === 'link_previews') refreshAll();
       // Hear the new volume (or sound) right away.

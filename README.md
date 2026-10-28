@@ -277,6 +277,8 @@ keeps everything, but *Remove* followed by adding the workspace again starts it 
 Copyright (C) 2026 Nicola Borghi. Agora is free software under the [GNU General Public License v3.0 or later](LICENSE):
 you can use, study, share and modify it, and versions you distribute must stay under the same licence.
 
-The bundled Lato font is under the [SIL Open Font License](ui/fonts/OFL.txt), and the monochrome
-[Noto Emoji](https://github.com/googlefonts/noto-emoji) font under the same licence ([text](ui/fonts/OFL-NotoEmoji.txt)); the emoji
+The bundled Lato font is under the [SIL Open Font License](ui/fonts/OFL.txt); emoji are drawn with
+[Noto Color Emoji](https://github.com/googlefonts/noto-emoji), under the same licence
+([text](ui/fonts/OFL-NotoEmoji.txt)), cut down to the yellow version of each emoji by
+`scripts/make-emoji-font.mjs`; the emoji
 shortcode table (`ui/js/emoji-data.js`) is generated from [emoji-datasource](https://github.com/iamcal/emoji-data) (MIT).

@@ -7,9 +7,10 @@
   src: local("Lato Regular"), local("Lato-Regular"), url("fonts/lato-regular.woff2") format("woff2"); }
 @font-face { font-family: "Lato"; font-weight: 600 700; font-style: normal; font-display: swap;
   src: local("Lato Bold"), local("Lato-Bold"), url("fonts/lato-bold.woff2") format("woff2"); }
-/* Monochrome emoji (Settings → Appearance), drawn in the text colour. Only emoji code points, so
-   digits, # and * stay in the text font. */
-@font-face { font-family: "Agora Emoji"; font-weight: 300 700; font-display: swap; src: url("fonts/noto-emoji.ttf") format("truetype");
+/* Emoji: Noto colour (SIL OFL) with only the yellow version of each emoji, the same on every system
+   (scripts/make-emoji-font.mjs). Only emoji code points, so digits,
+   # and * stay in the text font. */
+@font-face { font-family: "Agora Emoji"; font-display: swap; src: url("fonts/noto-emoji.woff2") format("woff2");
   unicode-range: U+A9, U+AE, U+203C, U+2049, U+2122, U+2139, U+2194-2199, U+21A9-21AA, U+231A-231B, U+2328, U+23CF, U+23E9-23FA,
     U+24C2, U+25AA-25AB, U+25B6, U+25C0, U+25FB-25FE, U+2600-27BF, U+2934-2935, U+2B05-2B07, U+2B1B-2B1C, U+2B50, U+2B55,
     U+3030, U+303D, U+3297, U+3299, U+FE0F, U+200D, U+20E3, U+1F000-1FAFF, U+E0020-E007F; }
@@ -533,9 +534,6 @@ body.home-mode #sidebar, body.home-mode .resizer[data-target="sidebar"] { displa
 .msg-preview { padding: 6px 10px 2px; font-size: 13px; border-top: 1px solid var(--line); margin-top: 4px; }
 .font-preview { background: var(--bg-2); border-radius: 6px; padding: 8px 10px; font-size: 13px; line-height: 1.4; }
 .font-preview b { font-size: 15px; }
-.emoji-preview { background: var(--bg-2); border-radius: 6px; padding: 10px; font-size: 18px; letter-spacing: 2px; }
-.emoji-preview.emoji-mono { font-family: "Agora Emoji", var(--font); }
-.emoji-preview.emoji-color { font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
 
 /* Theme previews: a miniature window in fixed light/dark colors (split in two for "As system") */
 .theme-preview { display: flex; height: 74px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }

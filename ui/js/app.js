@@ -2,7 +2,7 @@
 // render function rebuilds one region from it. Only the open conversation's
 // messages live in memory (capped), everything else stays in the Rust archive.
 import { invoke, listen, esc, initials, toast, icon, OS } from './api.js';
-import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls, setMonoEmoji } from './markdown.js';
+import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls } from './markdown.js';
 import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
 import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged } from './settings.js';
@@ -107,11 +107,8 @@ export function applyTheme() {
   document.documentElement.dataset.sbWidth = S.settings?.sidebar_width || 'compact';
   if (S.settings?.font === 'lato') S.settings.font = 'system'; // Lato is the default now
   const font = FONTS.find(([id]) => id === S.settings?.font) || FONTS[0];
-  // Monochrome emoji come first in the stack; their font only covers emoji code points.
-  if (S.settings && !S.settings.emoji_style) S.settings.emoji_style = 'mono'; // settings saved before 0.2.1
-  const mono = (S.settings?.emoji_style || 'mono') === 'mono';
-  setMonoEmoji(mono);
-  document.documentElement.style.setProperty('--font', mono ? `"Agora Emoji", ${font[2]}` : font[2]);
+  // The emoji font comes first in the stack; it only covers emoji code points.
+  document.documentElement.style.setProperty('--font', `"Agora Emoji", ${font[2]}`);
   const accent = ACCENTS.find(([id]) => id === S.settings?.accent) || ACCENTS[0];
   document.documentElement.style.setProperty('--accent-light', accent[2]);
   document.documentElement.style.setProperty('--accent-dark', accent[3]);

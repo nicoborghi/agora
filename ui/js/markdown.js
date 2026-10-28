@@ -17,15 +17,6 @@ for (const [alias, name] of [['slight_smile', 'slightly_smiling_face'], ['slight
   EMOJI[alias] ||= EMOJI[name];
 }
 
-// Monochrome emoji (Settings → Appearance): the "show as emoji" selector U+FE0F makes the
-// browser pick a colour font whatever the font stack says, so it is left out of what is shown.
-const COLOUR = { ...EMOJI };
-let mono = false;
-export function setMonoEmoji(on) {
-  mono = on;
-  for (const [k, v] of Object.entries(COLOUR)) EMOJI[k] = on ? v.replace(/️/g, '') : v;
-}
-
 /** The picker's set: the ones people actually use. Every other name works when typed. */
 export const COMMON_EMOJI = ['+1', '-1', 'heart', 'joy', 'smile', 'slightly_smiling_face', 'eyes', 'tada', 'white_check_mark',
   'heavy_check_mark', 'rocket', 'pray', 'fire', '100', 'thinking_face', 'ok_hand', 'clap', 'warning', 'x', 'question',
@@ -36,13 +27,15 @@ export const QUICK_REACTIONS = ['+1', 'heart', 'joy', 'eyes', 'tada', 'white_che
   'fire', '100', 'thinking_face', 'ok_hand', 'clap', 'warning', 'x', 'question',
   'raised_hands', 'wave', 'sob', 'muscle', 'bulb', 'bug', 'coffee', 'telescope'];
 
-const TONES = { 2: '\u{1F3FB}', 3: '\u{1F3FC}', 4: '\u{1F3FD}', 5: '\u{1F3FE}', 6: '\u{1F3FF}' };
-/** An emoji with an optional skin tone (Slack writes `wave::skin-tone-3`). */
-function withTone(name, tone) {
-  const base = EMOJI[name];
-  if (!base) return null;
-  return tone && TONES[tone] ? base.replace(/️$/, '') + TONES[tone] : base;
+/**
+ * An emoji, skin tone or not (Slack writes `wave::skin-tone-3`). Agora's emoji font keeps only the
+ * yellow version of each, so tones are left out and every emoji is drawn in that one font.
+ */
+function withTone(name, _tone) {
+  return EMOJI[name] || null;
 }
+/** Skin-tone modifiers typed straight into a message. */
+const SKIN_TONES = /[\u{1F3FB}-\u{1F3FF}]/gu;
 
 export const emoji = (name) => {
   const [base, tone] = String(name).split('::skin-tone-');
@@ -184,7 +177,7 @@ export function renderMarkdown(src) {
     para.push(line);
   }
   flush();
-  return mono ? html.replace(/️/g, '') : html;
+  return html.replace(SKIN_TONES, '');
 }
 
 export function extractUrls(text) {

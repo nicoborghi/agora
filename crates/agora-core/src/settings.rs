@@ -23,8 +23,6 @@ pub struct Settings {
     pub theme: String,
     /// Accent colour preset the UI offers ("blue", "violet", "teal"...).
     pub accent: String,
-    /// "mono" (Noto Emoji line drawings, in the text colour) | "system" (the system's colour emoji).
-    pub emoji_style: String,
     /// Text size of the whole window (applied as a zoom): "small" | "normal" (Medium) | "large".
     /// The name predates the option covering more than the sidebar.
     pub sidebar_size: String,
@@ -56,7 +54,6 @@ impl Default for Settings {
         Self {
             theme: "system".into(),
             accent: "blue".into(),
-            emoji_style: "mono".into(),
             sidebar_size: "normal".into(),
             sidebar_width: "compact".into(),
             font: "system".into(),
