@@ -570,9 +570,17 @@ impl Engine {
         let Some(channel) = self.store.get_channel(acc, &m.channel_id)? else { return Ok(()) };
         let self_id = account.self_user_id.clone().unwrap_or_default();
         let is_self = !self_id.is_empty() && m.author_id == self_id;
-        let mentions_me = m.mentions.iter().any(|u| u == MENTION_ALL || (!self_id.is_empty() && *u == self_id));
+        let mentioned = m.mentions.iter().any(|u| u == MENTION_ALL || (!self_id.is_empty() && *u == self_id));
+        // A reply in a thread we started or replied in is addressed to us, like a mention.
+        let my_thread = !is_self
+            && !self_id.is_empty()
+            && match &m.thread_root {
+                Some(root) => self.store.in_thread(acc, &m.channel_id, root, &self_id)?,
+                None => false,
+            };
+        let mentions_me = mentioned || my_thread;
         let viewing = self.is_viewing(acc, &m.channel_id);
-        // Thread replies only count as unread when they mention us.
+        // Thread replies only count as unread when they mention us or follow up on our thread.
         let counts = !is_self && !viewing && (m.thread_root.is_none() || mentions_me);
         if counts {
             self.store.bump_unread(acc, &m.channel_id, mentions_me)?;

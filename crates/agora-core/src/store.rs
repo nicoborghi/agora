@@ -913,6 +913,16 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Whether `user` started the thread or replied in it.
+    pub fn in_thread(&self, acc: &str, ch: &str, root: &str, user: &str) -> StoreResult<bool> {
+        Ok(self.db().query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE account_id = ?1 AND channel_id = ?2
+             AND (id = ?3 OR thread_root = ?3) AND author_id = ?4)",
+            params![acc, ch, root, user],
+            |r| r.get(0),
+        )?)
+    }
+
     pub fn latest_message(&self, acc: &str, ch: &str) -> StoreResult<Option<Message>> {
         Ok(self
             .db()
