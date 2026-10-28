@@ -301,8 +301,7 @@ RENDER.rail = function renderRail() {
   const inSettings = settingsOpen();
   const on = (id) => (!inSettings && S.rail === id ? 'active' : '');
   let html = `<div class="rail-item home ${on('home')}" data-id="home" title="Home (Ctrl+0)">${icon('grid')}<span class="num">0</span></div>
-    <div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div>
-    <div class="rail-item all bookmarks ${on('bookmarks')}" data-id="bookmarks" title="Bookmarks">${icon('bookmark')}</div><div class="rail-sep"></div>`;
+    <div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div><div class="rail-sep"></div>`;
   enabledAccounts().forEach((a, i) => {
     const st = S.conn[a.id];
     const cls = st?.state === 'auth_expired' ? 'expired' : st?.state === 'offline' ? 'offline' : '';
@@ -312,6 +311,8 @@ RENDER.rail = function renderRail() {
       style="--c:${esc(a.color)}" title="${esc(title)}">${accountIcon(a)}
       ${unread.has(a.id) ? '<span class="dot"></span>' : ''}${i < 9 ? `<span class="num">${i + 1}</span>` : ''}</div>`;
   });
+  // Bookmarks span every workspace, so they sit below them.
+  html += `<div class="rail-sep"></div><div class="rail-item all bookmarks ${on('bookmarks')}" data-id="bookmarks" title="Bookmarks">${icon('bookmark')}</div>`;
   html += `<div class="rail-spacer"></div><div class="rail-item gear ${inSettings ? 'active' : ''}" data-act="settings"
     title="${inSettings ? 'Close settings (Esc)' : 'Settings (Ctrl+,)'}">${icon('gear')}</div>`;
   $('#rail').innerHTML = html;
