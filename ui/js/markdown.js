@@ -17,6 +17,15 @@ for (const [alias, name] of [['slight_smile', 'slightly_smiling_face'], ['slight
   EMOJI[alias] ||= EMOJI[name];
 }
 
+// Monochrome emoji (Settings → Appearance): the "show as emoji" selector U+FE0F makes the
+// browser pick a colour font whatever the font stack says, so it is left out of what is shown.
+const COLOUR = { ...EMOJI };
+let mono = false;
+export function setMonoEmoji(on) {
+  mono = on;
+  for (const [k, v] of Object.entries(COLOUR)) EMOJI[k] = on ? v.replace(/️/g, '') : v;
+}
+
 /** The picker's set: the ones people actually use. Every other name works when typed. */
 export const COMMON_EMOJI = ['+1', '-1', 'heart', 'joy', 'smile', 'slightly_smiling_face', 'eyes', 'tada', 'white_check_mark',
   'heavy_check_mark', 'rocket', 'pray', 'fire', '100', 'thinking_face', 'ok_hand', 'clap', 'warning', 'x', 'question',
@@ -175,7 +184,7 @@ export function renderMarkdown(src) {
     para.push(line);
   }
   flush();
-  return html;
+  return mono ? html.replace(/️/g, '') : html;
 }
 
 export function extractUrls(text) {
