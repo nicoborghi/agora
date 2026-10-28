@@ -135,7 +135,10 @@ export function renderMarkdown(src) {
       flush();
       const body = [];
       for (i++; i < lines.length && !/^\s*```\s*$/.test(lines[i]); i++) body.push(lines[i]);
-      html += `<pre><code>${highlight(body.join('\n'), fence[1])}</code></pre>`;
+      // Over 10 lines a block shows its start; the button opens it (see `.code-open`).
+      const long = body.length > 10;
+      html += `<pre${long ? ' class="long"' : ''}><code>${highlight(body.join('\n'), fence[1])}</code></pre>`;
+      if (long) html += `<button class="code-more" data-act="code-more"><span class="more">Show all ${body.length} lines</span><span class="less">Show less</span></button>`;
       continue;
     }
     if (/^\s*>/.test(line)) {

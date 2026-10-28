@@ -13,6 +13,8 @@ const TYPING_MS = 6000;
 
 export const S = {
   accounts: [],
+  /** Messages whose long code blocks were opened. */
+  openCode: new Set(),
   conn: {},
   channels: new Map(),
   settings: null,
@@ -958,6 +960,7 @@ function toolsHtml(m, inThread) {
   if (m.deleted) return '';
   const marked = S.bookmarks.has(bkey(m));
   return `<div class="msg-tools">
+    ${topEmoji(4).map((n) => `<button class="icon-btn quick" data-act="quick-react" data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n]}</button>`).join('')}
     <button class="icon-btn" data-act="react" title="Add reaction">${icon('smile')}</button>
     <button class="icon-btn ${marked ? 'on' : ''}" data-act="bookmark" title="${marked ? 'Remove bookmark' : 'Bookmark'}">${icon('bookmark')}</button>
     ${inThread ? '' : `<button class="icon-btn" data-act="thread" title="Reply in thread">${icon('reply')}</button>`}
@@ -992,7 +995,7 @@ function messageHtml(m, grouped, inThread) {
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
   const replies = !inThread && m.reply_count
     ? `<button class="replies" data-act="thread">${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}</button>` : '';
-  return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''}" data-id="${esc(m.id)}">
+  return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''} ${S.openCode.has(m.id) ? 'code-open' : ''}" data-id="${esc(m.id)}">
     ${grouped ? `<span class="gutter-time">${fmtTime(m.ts)}</span>` : messageAvatar(m)}
     <div class="msg-main">
       ${grouped ? '' : `<div class="msg-head"><b class="author"${personAttrs(m)}>${esc(m.author_name)}</b><time title="${esc(new Date(m.ts).toLocaleString())}">${fmtTime(m.ts)}</time></div>`}
@@ -1305,15 +1308,31 @@ function autocompleteKey(e) {
  * Every standard emoji: a first tab of everyday ones (`first`), a tab per category and a search.
  * Only the open tab's buttons are in the page.
  */
+const EMOJI_TAB_ICONS = ['clock', 'smile', 'person', 'leaf', 'cup', 'car', 'ball', 'bulb', 'heart', 'flag'];
+
+/** How often each emoji was picked here (a per-viewer convenience, so localStorage). */
+let emojiUse;
+function useEmoji(name) {
+  topEmoji(0);
+  emojiUse[name] = (emojiUse[name] || 0) + 1;
+  save('emojiUse', emojiUse);
+}
+/** The `n` most used emojis, topped up from the quick reactions. */
+function topEmoji(n, base = QUICK_REACTIONS) {
+  emojiUse ??= load('emojiUse') || {};
+  const used = Object.keys(emojiUse).filter((k) => EMOJI[k]).sort((a, b) => emojiUse[b] - emojiUse[a]);
+  return [...new Set([...used, ...base])].slice(0, n);
+}
+
 function showFullEmojiPicker(anchor, first, onPick) {
-  const tabs = [['Frequently used', first], ...EMOJI_GROUPS.map(([name, list]) => [name, list.split(' ')])];
+  const tabs = [['Frequently used', topEmoji(Infinity, first)], ...EMOJI_GROUPS.map(([name, list]) => [name, list.split(' ')])];
   let tab = 0;
   const buttons = (names) => names.filter((n) => EMOJI[n])
     .map((n) => `<button data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n]}</button>`).join('');
   showPopover(anchor, `<div class="emoji-picker">
       <input type="text" class="emoji-search" placeholder="Search emoji" spellcheck="false">
       <div class="emoji-tabs">${tabs.map(([name, list], i) =>
-        `<button data-tab="${i}" class="${i ? '' : 'on'}" title="${esc(name)}">${EMOJI[list[0]] || ''}</button>`).join('')}</div>
+        `<button data-tab="${i}" class="${i ? '' : 'on'}" title="${esc(name)}">${icon(EMOJI_TAB_ICONS[i] || 'grid')}</button>`).join('')}</div>
       <div class="emoji-grid wide"></div></div>`, (pop) => {
     const grid = pop.querySelector('.emoji-grid');
     const search = pop.querySelector('.emoji-search');
@@ -1343,6 +1362,7 @@ function showFullEmojiPicker(anchor, first, onPick) {
       const b = e.target.closest('[data-emoji]');
       if (!b) return;
       closePopover();
+      useEmoji(b.dataset.emoji);
       onPick(b.dataset.emoji);
     });
   });
@@ -2251,6 +2271,11 @@ function onMessageAreaClick(e, inPanel) {
     case 'react': showReactionPicker(btn, m); break;
     case 'bookmark': toggleBookmark(m); break;
     case 'toggle-reaction': toggleReaction(m, btn.dataset.emoji); break;
+    case 'quick-react': useEmoji(btn.dataset.emoji); toggleReaction(m, btn.dataset.emoji); break;
+    case 'code-more':
+      if (S.openCode.has(m.id)) S.openCode.delete(m.id); else S.openCode.add(m.id);
+      row.classList.toggle('code-open', S.openCode.has(m.id));
+      break;
     case 'thread': openThread(m.id); break;
     case 'edit': startEdit(m); break;
     case 'delete':

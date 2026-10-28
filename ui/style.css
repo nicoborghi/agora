@@ -164,6 +164,11 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
   padding: 8px 10px; overflow-x: auto; white-space: pre; }
 .msg:hover .msg-body pre { background: var(--bg); }
 .msg-body pre code { background: none; padding: 0; }
+.msg:not(.code-open) .msg-body pre.long { max-height: calc(10 * 1.5em + 8px); overflow-y: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.code-more { display: block; font-size: 12px; color: var(--accent); padding: 2px 0; margin: -2px 0 4px; }
+.code-more:hover { text-decoration: underline; }
+.msg.code-open .code-more .more, .msg:not(.code-open) .code-more .less { display: none; }
 .msg-body .mention { color: var(--accent); font-weight: 600; }
 .msg-body .mention[data-handle], .msg-body .chan-ref { cursor: pointer; border-radius: 3px; }
 .msg-body .mention[data-handle]:hover, .msg-body .chan-ref:hover { text-decoration: underline; }
@@ -231,7 +236,7 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
 
 #popover { position: fixed; z-index: 15; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 200px; }
 .emoji-grid { display: grid; grid-template-columns: repeat(8, 28px); gap: 2px; }
-.emoji-grid button { height: 28px; border-radius: var(--radius); font-size: 16px; }
+.emoji-grid button { height: 28px; border-radius: var(--radius); font-size: 15px; }
 .emoji-grid button:hover { background: var(--bg-3); }
 .form-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .form-row label { color: var(--fg-2); }
@@ -733,9 +738,10 @@ input[type="range"] { accent-color: var(--accent); }
 .emoji-picker { display: grid; gap: 6px; width: 304px; }
 .emoji-picker .emoji-search { width: 100%; }
 .emoji-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.emoji-tabs button { flex: 1; height: 28px; border-radius: var(--radius); font-size: 16px; opacity: .55; }
-.emoji-tabs button:hover { background: var(--bg-3); opacity: 1; }
-.emoji-tabs button.on { background: var(--sel-bg); opacity: 1; }
+.emoji-tabs button { flex: 1; height: 26px; border-radius: var(--radius); display: grid; place-items: center; color: var(--fg-2); }
+.emoji-tabs button .i { width: 15px; height: 15px; }
+.emoji-tabs button:hover { background: var(--bg-3); color: var(--fg); }
+.emoji-tabs button.on { background: var(--sel-bg); color: var(--fg); }
 .emoji-picker .emoji-grid.wide { grid-template-columns: repeat(10, 28px); height: 248px; max-height: none; align-content: start; }
 .emoji-picker .muted { grid-column: 1 / -1; margin: 8px 4px; font-size: 12px; }
 
@@ -746,6 +752,7 @@ input[type="range"] { accent-color: var(--accent); }
 /* Bookmarks: a thin stripe on bookmarked messages, and the Bookmarks page. */
 .msg.bookmarked { box-shadow: inset 3px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
 .msg-tools .icon-btn.on { color: var(--accent); }
+.msg-tools .quick { font-size: 14px; line-height: 1; }
 .bm-list { display: grid; gap: 12px; max-width: 860px; }
 .bm-item { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); overflow: hidden; }
 .bm-msg .msg-tools { display: none; }
