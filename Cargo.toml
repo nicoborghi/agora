@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/agora-core", "crates/agora-mattermost", "crates/agora-rocketchat", "crates/agora-slack", "src-tauri", "probes"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/nicoborghi/agora"
 edition = "2021"

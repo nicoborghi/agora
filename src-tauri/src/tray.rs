@@ -57,11 +57,19 @@ pub fn set_dots(app: &AppHandle, colors: &[String]) {
         let _ = tray.set_tooltip(Some(tip));
     }
     if let Some(w) = app.get_webview_window("main") {
+        // Windows: a dot per workspace on the taskbar button. macOS: a dot badge on the Dock icon.
+        // Linux: the launcher badge (where the desktop supports it) counts workspaces with news.
+        #[cfg(windows)]
         let _ = w.set_overlay_icon(if rgb.is_empty() { None } else { Some(render_overlay(&rgb)) });
+        #[cfg(target_os = "macos")]
+        let _ = w.set_badge_label(if rgb.is_empty() { None } else { Some("•".to_string()) });
+        #[cfg(target_os = "linux")]
+        let _ = w.set_badge_count(if rgb.is_empty() { None } else { Some(rgb.len() as i64) });
     }
 }
 
 /// Taskbar overlay (bottom-right of the button): 1 dot, 2 side by side, 3–4 in a 2×2 grid.
+#[cfg(windows)]
 fn render_overlay(dots: &[[u8; 3]]) -> Image<'static> {
     let mut px = vec![0u8; SIZE * SIZE * 4];
     let (r, centers): (f32, &[(f32, f32)]) = match dots.len() {

@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agora: Slack, Mattermost and Rocket.Chat in one app</title>
-  <meta name="description" content="One fast, light Windows app for Slack, Mattermost and Rocket.Chat: one Home and one search across every workspace, with fine-tunable notifications and an encrypted local archive.">
+  <meta name="description" content="One fast, light desktop app for Slack, Mattermost and Rocket.Chat: one Home and one search across every workspace, with fine-tunable notifications and an encrypted local archive.">
   <meta property="og:title" content="Agora">
-  <meta property="og:description" content="Slack, Mattermost and Rocket.Chat in one fast, light Windows app.">
+  <meta property="og:description" content="Slack, Mattermost and Rocket.Chat in one fast, light app for Windows, macOS and Linux.">
   <meta property="og:image" content="https://nicoborghi.github.io/agora/screenshot.png">
   <link rel="icon" href="icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -81,18 +81,18 @@
   <header class="wrap">
     <img class="logo" src="icon.png" alt="">
     <h1>Agora</h1>
-    <p class="tagline"><span>Slack, Mattermost and Rocket.Chat</span> in one fast, light Windows app.</p>
+    <p class="tagline"><span>Slack, Mattermost and Rocket.Chat</span> in one fast, light app for Windows, macOS and Linux.</p>
     <p class="sub">One Home and one search across every workspace you are in, with fine-tunable notifications and your
       history kept in an encrypted archive on your PC.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/nicoborghi/agora/releases">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
-        Download for Windows</a>
+        Download</a>
       <a class="btn" href="https://github.com/nicoborghi/agora">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></svg>
         Source on GitHub</a>
     </div>
-    <p class="note">Beta · Windows 10 and 11 · free and open source (GPLv3)</p>
+    <p class="note">Beta · Windows 10/11, macOS 11+, Ubuntu 22.04+ · free and open source (GPLv3)</p>
     <div class="shot"><img src="screenshot.png" alt="Agora with Slack, Mattermost and Rocket.Chat workspaces in one sidebar, a conversation and a profile open" width="2880" height="1800"></div>
   </header>
 
@@ -104,7 +104,7 @@
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg></div>
         <h3>One Home for everything</h3><p>Workspace cards with new messages and mentions. <i>All conversations</i> from every workspace in one sidebar.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg></div>
-        <h3>Your history, searchable across every service</h3><p>Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. <i>Search on the server</i> reaches back further (depending on the service).</p></div>
+        <h3>Your history, searchable across every service</h3><p>Every message received is kept in a local, encrypted archive (SQLCipher, key in the system's secret store): readable and searchable across all services at once, even offline. <i>Search on the server</i> reaches back further (depending on the service).</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
         <h3>Fine-tunable notifications</h3><p>Three levels (Alert, Dot, Silent) set in layers: a default for direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.</p></div>
       <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h7l2 2h7v10H4z"/><path d="M4 7V5h6l2 2"/></svg></div>
@@ -118,7 +118,7 @@
 
   <section class="wrap">
     <h2>Works with</h2>
-    <p class="lead">Sign in the way you always do, single sign-on included. Agora keeps the session in Windows Credential Manager.</p>
+    <p class="lead">Sign in the way you always do, single sign-on included. Agora keeps the session in the system's secret store (Credential Manager, Keychain or keyring).</p>
     <div class="services">
       <div class="svc" style="--c:#8f86c9"><h3>Slack</h3><p class="how">Your usual login; every workspace of that session at once.</p>
         <ul><li>Messages, threads, reactions, files</li><li>Sidebar sections and Starred</li><li>Profiles, members, server search</li></ul></div>

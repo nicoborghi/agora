@@ -1,6 +1,6 @@
 // Settings screen. Inputs carry `data-path` (a dotted path into S.settings) and
 // are saved automatically; everything else is handled by `data-act`.
-import { invoke, esc, initials, toast, icon } from './api.js';
+import { invoke, esc, initials, toast, icon, OS, KEYCHAIN } from './api.js';
 import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate } from './app.js';
 
 const SECTIONS = [
@@ -31,7 +31,7 @@ const SIGNIN = {
     placeholder: 'Workspace (optional), e.g. acme',
     intro: `Opens Slack's own sign-in page in a separate window (Google, SSO, email code and passwords all work).
       Every workspace you sign in to there is added, each as its own account. Agora keeps the web session
-      (token and cookie) in Windows Credential Manager; nothing has to be installed in the workspace.
+      (token and cookie) in ${KEYCHAIN}; nothing has to be installed in the workspace.
       <b>To add another workspace</b>, type its name: if the Slack session Agora already has is signed in
       to it, it is added at once without a window.`,
     tokenTitle: 'Paste a web session instead',
@@ -60,7 +60,7 @@ function signinForm(k) {
       <button class="btn primary" data-act="signin" ${off}>${signin.busy ? 'Waiting for sign-in...' : `Sign in to ${k.label}`}</button>
     </div>
     <p class="muted">${k.intro || `Opens your server's own login page in a separate window, so SSO, two-factor and passwords
-      work as in the browser. Agora keeps only the session token, in Windows Credential Manager.
+      work as in the browser. Agora keeps only the session token, in ${KEYCHAIN}.
       A link to a channel or the login page works too.`}</p>
     <details><summary class="muted">${k.tokenTitle || 'Use a personal access token instead'}</summary>
       <div class="form-row" style="justify-content:flex-start">
@@ -274,7 +274,7 @@ const VIEWS = {
     const s = S.settings;
     return `<h2>Privacy & storage</h2>
       ${opt('Encrypt the archive', s.cipher_available
-        ? 'SQLCipher, with the key kept in Windows Credential Manager. Switching converts the existing archive.'
+        ? `SQLCipher, with the key kept in ${KEYCHAIN}. Switching converts the existing archive.`
         : 'This build was compiled without SQLCipher.',
         `<input type="checkbox" class="switch" data-act="encrypt" ${s.db_encrypted ? 'checked' : ''} ${s.cipher_available ? '' : 'disabled'}>`)}
       ${opt('Keep versions before edits', 'Stores the old text when a message is edited. Off by default: check your workspace policy first.', toggle('keep_edit_history'))}
@@ -285,7 +285,7 @@ const VIEWS = {
   },
 
   advanced: () => `<h2>Advanced</h2>
-    ${opt('Start with Windows', 'Off by default.', toggle('autostart'))}
+    ${opt(OS === 'windows' ? 'Start with Windows' : 'Start at login', 'Off by default.', toggle('autostart'))}
     <h3>Updates</h3>
     ${opt(`Agora ${esc(S.settings.version)}`, S.update.available
       ? `Version ${esc(S.update.available.version)} is available.`

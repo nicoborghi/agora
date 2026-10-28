@@ -1,7 +1,7 @@
 // Main window. Plain DOM, no framework: the only state is `S`, and every
 // render function rebuilds one region from it. Only the open conversation's
 // messages live in memory (capped), everything else stays in the Rust archive.
-import { invoke, listen, esc, initials, toast, icon } from './api.js';
+import { invoke, listen, esc, initials, toast, icon, OS } from './api.js';
 import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls } from './markdown.js';
 import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
@@ -118,7 +118,7 @@ export function applyTheme() {
   paintTitlebar();
 }
 
-/** The Windows title bar takes the colour of the rail and sidebar below it. */
+/** The title bar takes the colour of the rail and sidebar below it (fully on Windows 11). */
 function paintTitlebar() {
   const css = getComputedStyle(document.documentElement);
   const v = (name) => css.getPropertyValue(name).trim();
@@ -129,7 +129,7 @@ function paintTitlebar() {
   invoke('set_titlebar', bar).catch(() => {});
 }
 let paintedBar = '';
-// "As system" follows Windows switching between light and dark while Agora runs.
+// "As system" follows the system switching between light and dark while Agora runs.
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paintTitlebar);
 
 // Every size is larger than the WebView's own 100%: Windows UI text at 13px reads small.
@@ -144,18 +144,19 @@ export function resetSidebarWidth() {
   save('layout', l);
 }
 
-// Fonts that ship with Windows (already loaded by the system and shared with every app, so they
-// cost no memory), plus Lato, bundled as two small files that load only when it is chosen.
-// "system" is the default id (older settings saved it for Segoe UI, now Lato).
+// Lato (bundled) plus fonts the system already has (shared with every app, so they cost no
+// memory); each system lists only the ones it ships. "system" is the default id (Lato), "segoe"
+// the system's own interface font (the id predates macOS and Linux).
 export const FONTS = [
-  // Bundled with Agora (two small files); a Windows-installed Lato wins.
-  ['system', 'Lato (default)', 'Lato, "Segoe UI", sans-serif'],
-  ['segoe', 'Segoe UI', '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif'],
-  ['calibri', 'Calibri', 'Calibri, "Segoe UI", sans-serif'],
-  ['arial', 'Arial', 'Arial, "Segoe UI", sans-serif'],
-  ['verdana', 'Verdana (wide, very legible)', 'Verdana, "Segoe UI", sans-serif'],
-  ['georgia', 'Georgia (serif)', 'Georgia, "Times New Roman", serif'],
-];
+  // Bundled with Agora (two small files); an installed Lato wins.
+  ['system', 'Lato (default)', 'Lato, system-ui, sans-serif', 'all'],
+  ['segoe', { windows: 'Segoe UI', mac: 'San Francisco (system)', linux: 'System font' }[OS],
+    'system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Ubuntu, Cantarell, sans-serif', 'all'],
+  ['calibri', 'Calibri', 'Calibri, "Segoe UI", sans-serif', 'windows'],
+  ['arial', 'Arial', 'Arial, Helvetica, sans-serif', 'windows mac'],
+  ['verdana', 'Verdana (wide, very legible)', 'Verdana, sans-serif', 'windows mac'],
+  ['georgia', 'Georgia (serif)', 'Georgia, "Times New Roman", serif', 'all'],
+].filter(([, , , on]) => on === 'all' || on.split(' ').includes(OS));
 
 // Accent colours: [id, label, light theme, dark theme].
 export const ACCENTS = [

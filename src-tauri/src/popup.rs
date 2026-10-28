@@ -1,5 +1,5 @@
-//! Custom notification popups: one small borderless window in the bottom-right
-//! corner, created on demand and destroyed as soon as it is empty, so it costs
+//! Custom notification popups: one small borderless window in a corner of the screen (bottom right;
+//! top right on macOS), created on demand and destroyed as soon as it is empty, so it costs
 //! no memory while nothing is shown.
 
 use agora_core::engine::PopupNote;
@@ -11,8 +11,6 @@ pub const LABEL: &str = "popup";
 const WIDTH: f64 = 340.0;
 const NOTE_HEIGHT: f64 = 76.0;
 const MARGIN: f64 = 12.0;
-/// Room left for the Windows taskbar at the bottom of the screen.
-const TASKBAR: f64 = 56.0;
 const MAX_PENDING: usize = 3;
 
 #[derive(Default)]
@@ -74,6 +72,8 @@ fn create(app: &AppHandle, count: usize) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Inside the screen's work area (without the taskbar, Dock or top bar): bottom right, except on
+/// macOS, where notifications appear at the top right under the menu bar.
 fn corner(app: &AppHandle, height: f64) -> (f64, f64) {
     let monitor = app
         .get_webview_window("main")
@@ -81,9 +81,12 @@ fn corner(app: &AppHandle, height: f64) -> (f64, f64) {
     match monitor {
         Some(m) => {
             let scale = m.scale_factor();
-            let size = m.size().to_logical::<f64>(scale);
-            let pos = m.position().to_logical::<f64>(scale);
-            (pos.x + size.width - WIDTH - MARGIN, pos.y + size.height - height - TASKBAR)
+            let area = m.work_area();
+            let pos = area.position.to_logical::<f64>(scale);
+            let size = area.size.to_logical::<f64>(scale);
+            let x = pos.x + size.width - WIDTH - MARGIN;
+            let y = if cfg!(target_os = "macos") { pos.y + MARGIN } else { pos.y + size.height - height - MARGIN };
+            (x, y)
         }
         None => (100.0, 100.0),
     }

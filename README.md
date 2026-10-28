@@ -11,7 +11,7 @@
   <a href="https://github.com/nicoborghi/agora/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicoborghi/agora/release.yml?label=Release%20build&logo=github&logoColor=white" alt="Release build"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/v/release/nicoborghi/agora?include_prereleases&label=release&color=7c5cff" alt="Release"></a>
   <a href="https://github.com/nicoborghi/agora/releases"><img src="https://img.shields.io/github/downloads/nicoborghi/agora/total?color=2f80ed" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white" alt="Windows 10 | 11">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Ubuntu-0078D6" alt="Windows | macOS | Ubuntu">
   <a href="https://tauri.app"><img src="https://img.shields.io/badge/built_with-Tauri_2-24C8DB?logo=tauri&logoColor=white" alt="Built with Tauri 2"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-stable-B7410E?logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="License: GPLv3"></a>
@@ -29,7 +29,7 @@
 Agora is not a wrapper that stacks web apps in different tabs. It talks to each service through its API, turns everything into one data model, and provides new features:
 
 - **One Home for everything.** Workspace cards with new messages and mentions. *All conversations* from every workspace in one sidebar.
-- **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in Windows Credential Manager): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
+- **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in the system's secret store): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
 - **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
 - **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it, and bookmarks collect messages from every workspace on one page.
 - **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
@@ -47,9 +47,17 @@ Agora is not a wrapper that stacks web apps in different tabs. It talks to each 
 
 ## Download
 
-Get the installer from the [latest release](https://github.com/nicoborghi/agora/releases). It installs for your user
-only (no administrator rights) and needs Windows 10 or 11 with the WebView2 runtime (included in Windows 11).
-Then open Settings → Accounts and sign in.
+Get it from the [latest release](https://github.com/nicoborghi/agora/releases), then open Settings → Accounts and sign in.
+
+| System | File | Notes |
+|---|---|---|
+| **Windows 10 / 11** | `Agora_…_x64-setup.exe` | Installs for your user only (no administrator rights). Needs the WebView2 runtime, included in Windows 11. |
+| **macOS 11+** | `Agora_…_aarch64.dmg` (Apple Silicon) or `…_x64.dmg` (Intel) | Not notarized yet: the first time, open it from System Settings → Privacy & Security → *Open Anyway*. |
+| **Ubuntu 22.04+** (and similar) | `Agora_…_amd64.AppImage` or `.deb` | The AppImage runs anywhere and updates itself; the `.deb` installs with `sudo apt install ./Agora_…_amd64.deb`. The tray icon needs AppIndicator support (built into Ubuntu). |
+
+Windows is where Agora is used every day; macOS and Ubuntu builds are new: please report what does not work.
+Sign-ins are kept in each system's secret store: Windows Credential Manager, the macOS Keychain, or GNOME
+Keyring / KWallet on Linux.
 
 **Updates install themselves.** Agora checks for a new version shortly after it starts and every few hours. When
 one is out, a small bar above your name offers *Update and restart*; Settings → Advanced has *Check for updates*.
@@ -62,11 +70,11 @@ tests, then builds, signs and publishes the installer and the `latest.json` that
 appears only if all of that succeeds; ordinary pushes run nothing.
 
 ```bash
-git tag v0.1.1
+git tag v0.2.0
 ```
 
 ```bash
-git push origin v0.1.1
+git push origin v0.2.0
 ```
 
 The signing key's private half lives outside the repository (`~/.tauri/agora.key`) and in the repository secret
@@ -79,8 +87,8 @@ The signing key's private half lives outside the repository (`~/.tauri/agora.key
 Settings → Accounts → **Mattermost** → type the server (`chat.example.org`, a channel link or the login
 page address all work) → **Sign in**. A separate window shows the server's own login page, so SSO
 (institution / Google / GitLab / SAML), two-factor and passwords behave exactly as in the browser. When
-you are in, the window closes by itself. Agora keeps only the session token, in Windows Credential
-Manager. The window runs in private mode, so no cookies are left behind.
+you are in, the window closes by itself. Agora keeps only the session token, in the system's secret
+store. The window runs in private mode, so no cookies are left behind.
 
 When the session expires (by default after 30 days for SSO logins), the account turns grey and the
 sidebar shows **Sign in**. Fallback: *Use a personal access token instead*, if the server allows them.
@@ -96,7 +104,7 @@ threads; images (served through the app with your token) and link previews; inte
 ## Adding a Rocket.Chat account
 
 Same flow: Settings → Accounts → **Rocket.Chat** → server → **Sign in**, then log in in the window
-(SSO, 2FA, password). Agora keeps the user id and login token in Windows Credential Manager. Login tokens
+(SSO, 2FA, password). Agora keeps the user id and login token in the system's secret store. Login tokens
 last 90 days by default; after that the account turns grey with a **Sign in** button.
 Fallback: a personal access token (Avatar → Account → Personal Access Tokens shows the User ID and token once).
 
@@ -117,7 +125,7 @@ your workspaces: Agora adds every one that session is signed in to, and the link
 sign-in window (they would otherwise try a new tab or the desktop app). To add a workspace later, type its
 name and press **Sign in**: Agora first tries the Slack session it already has, so a workspace signed in to
 in that session is added at once, with no window. Only otherwise does the sign-in window open. The window title says "loading..." while a page loads. Agora uses the Slack web client's own session (an
-`xoxc-` token and the `d` cookie), kept in Windows Credential Manager. No Slack app has to be installed and
+`xoxc-` token and the `d` cookie), kept in the system's secret store. No Slack app has to be installed and
 no admin approval is needed. Check the workspace policy before using it (see *Pre-publication* in Settings).
 
 - Realtime through `rtm.connect`: messages, edits, deletions, threads, reactions, typing, read state from other
@@ -133,15 +141,16 @@ no admin approval is needed. Check the workspace policy before using it (see *Pr
 
 # Building from source
 
-## Prerequisites (native Windows, not WSL)
+## Prerequisites
 
-| Tool | Why |
+Everywhere: [Rust](https://rustup.rs) (stable) and [Node.js](https://nodejs.org) LTS (only to run the Tauri CLI,
+`npm install` once).
+
+| System | Also needed |
 |---|---|
-| [Rust](https://rustup.rs) (stable, MSVC toolchain) | the app |
-| Visual Studio Build Tools, workload "Desktop development with C++" | linker, `nmake` |
-| [Node.js](https://nodejs.org) LTS | only to run the Tauri CLI (`npm install` once) |
-| [Strawberry Perl](https://strawberryperl.com) | builds the OpenSSL that SQLCipher uses. Git's Perl is **not** enough |
-| WebView2 runtime | already included in Windows 11 |
+| **Windows** (native, not WSL) | Visual Studio Build Tools, workload "Desktop development with C++"; [Strawberry Perl](https://strawberryperl.com) to build the OpenSSL that SQLCipher uses (Git's Perl is **not** enough); NASM; the WebView2 runtime (in Windows 11) |
+| **macOS** | Xcode Command Line Tools (`xcode-select --install`) |
+| **Ubuntu / Debian** | `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libssl-dev pkg-config build-essential` |
 
 If the SQLCipher/OpenSSL build gives trouble, you can run unencrypted (see below); please open an issue with the error.
 
@@ -242,7 +251,7 @@ Possible later option: unload the main webview when Agora sits in the tray for a
 
 ## Security notes
 
-- Tokens: Windows Credential Manager only. The archive key is also stored there (entry `Agora/db-key`).
+- Tokens: the system's secret store only (Windows Credential Manager, macOS Keychain, Secret Service on Linux). The archive key is also stored there (entry `Agora/db-key`).
 - `agora.json` in the data folder holds only the "archive is encrypted" flag.
 - Links always open in the default browser. Message HTML is always escaped, and a CSP is set.
 - Slack sign-in keeps the same web-session token (`xoxc` + `d` cookie) the Slack web app uses. Check your

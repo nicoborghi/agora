@@ -16,7 +16,6 @@ demo = []
 
 [dependencies]
 rusqlite = "0.32"
-keyring = { version = "3", features = ["windows-native"] }
 getrandom = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tokio.workspace = true
@@ -26,3 +25,14 @@ async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 fastrand.workspace = true
+
+# Saved sign-ins and the archive key, in each system's own secret store.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+# Secret Service (GNOME Keyring, KWallet) over D-Bus, with pure-Rust crypto.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

@@ -1,21 +1,78 @@
 name: Release
 
-# The only workflow: nothing runs on ordinary pushes. Tag a commit on main to release it:
-# the tests run first, then the build; the release is created at the very end, so it appears
-# (and installed copies are offered it) only if everything succeeded.
-#   git tag v0.1.1 && git push origin v0.1.1
-# The tag must match "version" in tauri.conf.json. Releases are never marked as pre-releases:
-# GitHub's "latest" link skips those, and installed copies find updates through it. (0.x = beta.)
+# The only workflow; ordinary pushes run nothing.
+#
+# Push a version tag to release (it must match "version" in src-tauri/tauri.conf.json):
+#   git tag v0.2.0 && git push origin v0.2.0
+# 1. A hidden draft release is created for the tag.
+# 2. Windows, Ubuntu and macOS (Apple Silicon and Intel) each run the tests, then build, sign and
+#    upload their installers, and their entry of latest.json, to that draft.
+# 3. Only when every system succeeded is the release published. A failure leaves a hidden draft
+#    (delete it, fix, tag again): nobody sees a half-finished release or is offered its update.
+# Releases are never marked as pre-releases: GitHub's "latest" link, which installed copies use to
+# find updates, skips those. (0.x versions are betas.)
+#
+# Actions → Release → Run workflow builds every system without publishing anything: the
+# installers are attached to the run for testing.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  draft:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.create.outputs.result }}
+    steps:
+      - id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace('refs/tags/', ''),
+              name: `Agora ${context.ref.replace('refs/tags/', '')}`,
+              body: [
+                'Installers below for Windows (.exe), macOS (.dmg: Apple Silicon "aarch64" or Intel "x64") and Ubuntu (.AppImage or .deb).',
+                'Agora updates itself from now on; see the README for what is new and how to sign in.',
+              ].join('\n'),
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build:
+    needs: draft
+    # Runs for a tag once the draft exists, or on its own for a dry run (Run workflow).
+    if: always() && (needs.draft.result == 'success' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: ''
+            rust_target: ''
+          - name: Ubuntu
+            os: ubuntu-22.04
+            args: ''
+            rust_target: ''
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            args: '--target aarch64-apple-darwin'
+            rust_target: ''
+          - name: macOS (Intel)
+            os: macos-latest
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -23,25 +80,77 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: Swatinem/rust-cache@v2
-      - uses: ilammy/setup-nasm@v1
+        with:
+          key: ${{ matrix.name }}
+      # SQLCipher builds a vendored OpenSSL, which wants NASM on Windows.
+      - if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+      # WebKitGTK (the webview), the tray library, D-Bus (the keyring) and AppImage tooling.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libdbus-1-dev libssl-dev pkg-config patchelf file
       - run: npm ci
+      # Tests run on the machine's own architecture (the Intel build is cross-compiled; its code is
+      # the same as Apple Silicon's, already tested there).
       - name: Tests
+        if: matrix.rust_target == ''
         run: cargo test --workspace --locked
-      - name: Build, sign and publish
+      - name: Build and sign
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the installer for self-updates (secret: the content of ~/.tauri/agora.key).
+          # Signs the installers for self-updates (secret: the content of ~/.tauri/agora.key).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Agora ${{ github.ref_name }}
-          releaseBody: |
-            Windows installer below (per-user install, no admin rights needed).
-            See the README for what is new and how to sign in to your workspaces.
-          releaseDraft: false
-          prerelease: false
+          # Empty on a dry run: build only, no upload.
+          releaseId: ${{ needs.draft.outputs.id }}
+          args: ${{ matrix.args }}
           # latest.json: what installed copies read to find, download and verify the update.
           includeUpdaterJson: true
+      - name: Keep the installers (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Agora ${{ matrix.name }}
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/*/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+
+  publish:
+    needs: [draft, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const release_id = Number('${{ needs.draft.outputs.id }}');
+            // The builds add their system to latest.json in turn; make sure none was lost before
+            // installed copies can see this release.
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id });
+            const asset = assets.find((a) => a.name === 'latest.json');
+            if (!asset) throw new Error('latest.json is missing: not publishing');
+            const res = await github.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+              owner, repo, asset_id: asset.id, headers: { accept: 'application/octet-stream' },
+            });
+            const text = typeof res.data === 'string' ? res.data : Buffer.from(res.data).toString('utf8');
+            const platforms = Object.keys(JSON.parse(text).platforms || {});
+            const missing = ['windows-x86_64', 'linux-x86_64', 'darwin-aarch64', 'darwin-x86_64'].filter((p) => !platforms.includes(p));
+            if (missing.length) throw new Error(`latest.json lacks ${missing.join(', ')}: re-run the failed build, then this job`);
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id,
+              draft: false,
+              make_latest: 'true',
+            });

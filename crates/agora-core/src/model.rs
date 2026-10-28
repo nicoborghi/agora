@@ -11,7 +11,11 @@ pub type Millis = i64;
 pub const MENTION_ALL: &str = "!all";
 
 /// Origin of the app's `agora` URI scheme (WebView2 serves custom schemes as http://<scheme>.localhost).
+#[cfg(any(windows, target_os = "android"))]
 pub const MEDIA_ORIGIN: &str = "http://agora.localhost";
+/// macOS and Linux webviews reach custom schemes as `scheme://localhost`.
+#[cfg(not(any(windows, target_os = "android")))]
+pub const MEDIA_ORIGIN: &str = "agora://localhost";
 
 /// URL the UI can load for a service path that needs the account's credentials.
 /// The app serves it through [`crate::service::Service::fetch`].

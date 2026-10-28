@@ -1,6 +1,12 @@
 // Thin wrappers over the Tauri globals (withGlobalTauri), so no bundler is needed.
 const T = window.__TAURI__;
 
+/** The operating system, for the few things that differ (fonts, the secret store's name). */
+const UA = navigator.userAgent;
+export const OS = /Mac/.test(UA) ? 'mac' : /Linux|X11/.test(UA) ? 'linux' : 'windows';
+/** Where sign-ins and the archive key are kept, as each system calls it. */
+export const KEYCHAIN = { windows: 'Windows Credential Manager', mac: 'the macOS Keychain', linux: 'the system keyring (GNOME Keyring or KWallet)' }[OS];
+
 // `args` may be raw bytes (Uint8Array), sent as the request body; `options.headers` then carries the rest.
 export const invoke = (cmd, args = {}, options) => T.core.invoke(cmd, args, options);
 export const listen = (event, cb) => T.event.listen(event, (e) => cb(e.payload));

@@ -1,4 +1,5 @@
-//! Windows Credential Manager access. Tokens and the database key never touch disk in clear.
+//! The system's secret store (Windows Credential Manager, macOS Keychain, Linux Secret Service).
+//! Tokens and the database key never touch disk in clear.
 
 const SERVICE: &str = "Agora";
 /// The app's earlier name: entries saved under it are moved to `SERVICE` when first read.
