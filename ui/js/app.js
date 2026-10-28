@@ -850,7 +850,7 @@ async function loadHome() {
         ${i.messages.slice(-2).map((m) => `<div class="hi-msg">${messageAvatar(m, 'xs')}<div class="bubble"><span class="who">${esc(m.author_name)}</span>
           <span class="txt">${esc(plain(m.text) || (m.attachments?.length ? 'sent a file' : ''))}</span></div><time>${fmtTime(m.ts)}</time></div>`).join('')}
       </button>`).join('')
-      : `<div class="all-read">${s.unread ? 'News only in conversations kept quiet' : 'Nothing new here'}</div>`;
+      : `<div class="all-read">${s.unread ? 'News in muted conversations' : 'Nothing new here'}</div>`;
     const ink = inkFor(a.color);
     return `<section class="ws-card ${mine.length ? '' : 'calm'}" style="--c:${esc(a.color)};--cf:${ink}">
       <header data-rail="${esc(a.id)}" title="Open ${esc(a.name)}">

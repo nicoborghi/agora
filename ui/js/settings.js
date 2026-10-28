@@ -160,15 +160,14 @@ const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String
 
 const VIEWS = {
   accounts: () => `<h2>Accounts</h2>
-    ${S.accounts.map(accountCard).join('') || '<p class="muted">No accounts yet.</p>'}
-    <p class="muted">Drag icons in the left bar to reorder them; this list follows. Ctrl+1 to Ctrl+9 jump to them.</p>
-    <h3>Add account</h3>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <div class="add-bar"><span>${icon('plus')}Add a workspace</span>
       ${Object.entries(SIGNIN).map(([kind, k]) => `<button class="btn ${signin.kind === kind ? 'primary' : ''}" data-act="add-account" data-kind="${kind}">${k.label}</button>`).join('')}
-      <button class="btn" data-act="add-demo">Demo workspace</button>
+      <button class="btn" data-act="add-demo" title="Offline fake data for trying out the interface, notifications and tray">Demo</button>
     </div>
     ${signin.kind ? signinForm(SIGNIN[signin.kind]) : ''}
-    <p class="muted">The demo workspace is offline fake data for trying out the interface, notifications and tray.</p>`,
+    <h3>Your workspaces</h3>
+    ${S.accounts.map(accountCard).join('') || '<p class="muted">No accounts yet: add one above.</p>'}
+    <p class="muted">Drag icons in the left bar to reorder them; this list follows. Ctrl+1 to Ctrl+9 jump to them.</p>`,
 
   notifications: () => {
     const n = S.settings.notifications;
@@ -184,6 +183,11 @@ const VIEWS = {
       </tbody>
     </table>
     <p class="muted">Mentions and keywords can raise any level to Alert (Settings → Mentions). Quiet hours hold popups back (Do not disturb).</p>
+    <h3>Popups</h3>
+    ${opt('Popup duration', 'Hovering a popup keeps it open.', `<input type="number" min="2" max="60" style="width:60px" data-path="notifications.popup_seconds" value="${getPath('notifications.popup_seconds')}"> s`)}
+    ${opt('Sound', 'Played with popups. Can be overridden per conversation.', `${select('notifications.sound', SOUNDS)} <button class="btn" data-act="test-sound">Test</button>`)}
+    ${opt('Volume', '', `<span class="vol"><input type="range" min="0" max="100" step="5" data-path="notifications.volume" value="${n.volume ?? 70}">
+      <output>${n.volume ?? 70}%</output></span>`)}
     <h3>Global defaults</h3>
     <div class="lv-row"><span>Direct and group messages</span>${seg('data-level="dm_level"', n.dm_level, false)}</div>
     <div class="lv-row"><span>Channels</span>${seg('data-level="channel_level"', n.channel_level, false)}</div>
@@ -194,12 +198,7 @@ const VIEWS = {
         <div class="lv-row"><span>Direct</span>${seg(`data-ws="${esc(a.id)}" data-level="dm_level"`, own.dm_level, true)}</div>
         <div class="lv-row"><span>Channels</span>${seg(`data-ws="${esc(a.id)}" data-level="channel_level"`, own.channel_level, true)}</div></div>`;
     }).join('') || '<p class="muted">No accounts yet.</p>'}
-    <p class="muted">Default follows the global setting. Single conversations: bell icon in the conversation header (it wins over both).</p>
-    <h3>Popups</h3>
-    ${opt('Popup duration', 'Hovering a popup keeps it open.', `<input type="number" min="2" max="60" style="width:60px" data-path="notifications.popup_seconds" value="${getPath('notifications.popup_seconds')}"> s`)}
-    ${opt('Sound', 'Played with popups. Can be overridden per conversation.', `${select('notifications.sound', SOUNDS)} <button class="btn" data-act="test-sound">Test</button>`)}
-    ${opt('Volume', '', `<span class="vol"><input type="range" min="0" max="100" step="5" data-path="notifications.volume" value="${n.volume ?? 70}">
-      <output>${n.volume ?? 70}%</output></span>`)}`;
+    <p class="muted">Default follows the global setting. Single conversations: bell icon in the conversation header (it wins over both).</p>`;
   },
 
   keywords: () => {
