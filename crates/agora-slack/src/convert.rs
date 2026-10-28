@@ -429,6 +429,7 @@ pub fn message(acc: &str, channel_id: &str, m: &Value, name_of: &dyn Fn(&str) ->
         reply_count: m["reply_count"].as_u64().unwrap_or(0) as u32,
         edited_at: m["edited"]["ts"].as_str().map(ts_ms),
         deleted: subtype == "tombstone",
+        in_channel: matches!(subtype, "thread_broadcast" | "reply_broadcast"),
         mentions,
         reactions,
         attachments: files,

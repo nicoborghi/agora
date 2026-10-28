@@ -51,6 +51,16 @@ pub struct MessageView {
     /// Who reacted (user id -> name and picture), so the UI can say who.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub reactors: HashMap<String, Reactor>,
+    /// For a thread reply: who wrote the message it answers, and how it starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<RootPreview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RootPreview {
+    pub author_name: String,
+    pub text: String,
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +77,7 @@ impl MessageView {
             author_avatar: a.avatar,
             message: a.message,
             reactors: HashMap::new(),
+            reply_to: None,
         }
     }
 }
@@ -201,6 +212,8 @@ pub struct Engine {
 
 /// How often the same archive page is checked against the service.
 const VERIFY_EVERY: Duration = Duration::from_secs(30);
+/// Thread replies shown with one page of a conversation.
+const REPLIES_PER_PAGE: u32 = 300;
 /// Pages fetched to close one gap; older ones are filled while scrolling up.
 const MAX_GAP_PAGES: usize = 5;
 
@@ -721,12 +734,28 @@ impl Engine {
             None => m.author_id.clone(),
         };
         let is_self = self.self_id(&m.account_id).as_deref() == Some(m.author_id.as_str());
-        let view = MessageView { author_avatar: user.and_then(|u| u.avatar_url), message: m, author_name, is_self, reactors: HashMap::new() };
+        let view = MessageView { author_avatar: user.and_then(|u| u.avatar_url), message: m, author_name, is_self, reactors: HashMap::new(), reply_to: None };
         Ok(self.with_reactors(vec![view]).pop().expect("one view in, one out"))
     }
 
-    /// Fills in who reacted, with one archive lookup per account for the whole list.
+    /// Fills in who reacted, with one archive lookup per account for the whole list, and for
+    /// replies the message they answer.
     fn with_reactors(&self, mut views: Vec<MessageView>) -> Vec<MessageView> {
+        let mut roots: HashMap<(String, String, String), Option<RootPreview>> = HashMap::new();
+        for v in &mut views {
+            let m = &v.message;
+            let Some(root) = &m.thread_root else { continue };
+            let k = (m.account_id.clone(), m.channel_id.clone(), root.clone());
+            let preview = roots.entry(k).or_insert_with(|| {
+                let r = self.store.get_message(&m.account_id, &m.channel_id, root).ok().flatten()?;
+                Some(RootPreview {
+                    author_name: self.store.user_name(&m.account_id, &r.author_id).unwrap_or_default(),
+                    text: text::preview(&r.text, 140),
+                    deleted: r.deleted,
+                })
+            });
+            v.reply_to = preview.clone();
+        }
         let mut wanted: HashMap<String, Vec<String>> = HashMap::new();
         for v in &views {
             for r in &v.message.reactions {
@@ -864,6 +893,14 @@ impl Engine {
                 }
             }
         }
+        // Thread replies from the same stretch of time, so the conversation shows what happened
+        // in its threads (the UI folds the ones that stay in the thread into one line).
+        let from = match local.first() {
+            Some(a) if (local.len() as u32) >= limit => a.message.ts,
+            _ => Millis::MIN,
+        };
+        local.extend(self.store.replies_between(acc, ch, from, before, REPLIES_PER_PAGE).map_err(err)?);
+        local.sort_by_key(|a| a.message.ts);
         let self_id = self.self_id(acc);
         Ok(self.with_reactors(local.into_iter().map(|a| MessageView::new(a, self_id.as_deref())).collect()))
     }

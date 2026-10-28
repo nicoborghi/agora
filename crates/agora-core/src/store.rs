@@ -86,6 +86,8 @@ struct Extra {
     attachments: Vec<Attachment>,
     #[serde(default)]
     links: Vec<LinkPreview>,
+    #[serde(default)]
+    in_channel: bool,
 }
 
 #[derive(Serialize)]
@@ -94,6 +96,8 @@ struct ExtraRef<'a> {
     reactions: &'a [Reaction],
     attachments: &'a [Attachment],
     links: &'a [LinkPreview],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    in_channel: bool,
 }
 
 pub struct Store {
@@ -221,6 +225,7 @@ fn read_message(r: &Row) -> rusqlite::Result<Message> {
         reply_count: r.get(7)?,
         edited_at: r.get(8)?,
         deleted: r.get(9)?,
+        in_channel: extra.in_channel,
         mentions: extra.mentions,
         reactions: extra.reactions,
         attachments: extra.attachments,
@@ -273,6 +278,7 @@ fn upsert_message_in(db: &Connection, m: &Message) -> StoreResult<()> {
         reactions: &m.reactions,
         attachments: &m.attachments,
         links: &m.links,
+        in_channel: m.in_channel,
     })
     .unwrap_or_else(|_| "{}".into());
     db.prepare_cached(
@@ -901,6 +907,28 @@ impl Store {
         Ok(out)
     }
 
+    /// Thread replies with `from <= ts < before`, the newest `limit` of them, oldest first.
+    pub fn replies_between(
+        &self,
+        acc: &str,
+        ch: &str,
+        from: Millis,
+        before: Option<Millis>,
+        limit: u32,
+    ) -> StoreResult<Vec<Authored>> {
+        let db = self.db();
+        let mut st = db.prepare(&format!(
+            "SELECT {MSG_COLS}, {AUTHOR_NAME}, u.avatar_url FROM messages m {AUTHOR_JOIN}
+             WHERE m.account_id = ?1 AND m.channel_id = ?2 AND m.thread_root IS NOT NULL
+               AND m.ts >= ?3 AND m.ts < ?4
+             ORDER BY m.ts DESC LIMIT ?5"
+        ))?;
+        let rows = st.query_map(params![acc, ch, from, before.unwrap_or(i64::MAX), limit], |r| read_authored(r))?;
+        let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
     /// Root message followed by its replies, oldest first.
     pub fn thread(&self, acc: &str, ch: &str, root: &str) -> StoreResult<Vec<Authored>> {
         let db = self.db();
@@ -1050,6 +1078,7 @@ mod tests {
             reply_count: 0,
             edited_at: None,
             deleted: false,
+            in_channel: false,
             mentions: vec![],
             reactions: vec![],
             attachments: vec![],

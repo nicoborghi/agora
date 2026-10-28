@@ -345,6 +345,10 @@ pub struct Message {
     pub edited_at: Option<Millis>,
     #[serde(default)]
     pub deleted: bool,
+    /// A thread reply that is also shown in the conversation (Slack "also send to channel",
+    /// Rocket.Chat "also show in channel", every Mattermost reply).
+    #[serde(default)]
+    pub in_channel: bool,
     /// User ids mentioned in the message, or [`MENTION_ALL`].
     #[serde(default)]
     pub mentions: Vec<String>,
@@ -443,6 +447,7 @@ mod tests {
             reply_count: 0,
             edited_at: None,
             deleted: false,
+            in_channel: false,
             mentions: vec![],
             reactions: vec![],
             attachments: vec![],

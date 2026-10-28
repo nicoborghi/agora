@@ -229,7 +229,7 @@ function onEvent(ev) {
 function onMessage(m) {
   S.typing.get(key(m.account_id, m.channel_id))?.delete(m.author_name);
   schedule('typing');
-  if (isOpen(m.account_id, m.channel_id) && !m.thread_root) {
+  if (isOpen(m.account_id, m.channel_id)) {
     const i = S.messages.findIndex((x) => x.id === m.id);
     if (i >= 0) S.messages[i] = m;
     else if (!S.messages.length || m.ts >= S.messages[0].ts || !S.hasOlder) {
@@ -998,13 +998,38 @@ function messageHtml(m, grouped, inThread) {
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
   const replies = !inThread && m.reply_count
     ? `<button class="replies" data-act="thread">${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}</button>` : '';
+  const ctx = !inThread && m.thread_root ? replyContextHtml(m) : '';
   return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''} ${S.openCode.has(m.id) ? 'code-open' : ''}" data-id="${esc(m.id)}">
     ${grouped ? `<span class="gutter-time">${fmtTime(m.ts)}</span>` : messageAvatar(m)}
     <div class="msg-main">
       ${grouped ? '' : `<div class="msg-head"><b class="author"${personAttrs(m)}>${esc(m.author_name)}</b><time title="${esc(new Date(m.ts).toLocaleString())}">${fmtTime(m.ts)}</time></div>`}
-      <div class="msg-body">${body}${edited}</div>
+      ${ctx}<div class="msg-body">${body}${edited}</div>
       ${attachmentsHtml(m)}${linksHtml(m)}${reactionsHtml(m)}${replies}
     </div>${toolsHtml(m, inThread)}</div>`;
+}
+
+/** "↳ Grace: how it starts", the message a reply answers; a click goes up to it. */
+function replyContextHtml(m) {
+  const r = m.reply_to;
+  const what = !r ? 'a message further up' : r.deleted ? 'a deleted message' : `<b>${esc(r.author_name)}</b> ${esc(r.text)}`;
+  return `<button class="reply-ctx" data-act="goto-root" data-root="${esc(m.thread_root)}" title="Go to the message and its thread">${icon('reply')}<span>${what}</span></button>`;
+}
+
+/** Replies that stay in their thread: one line per run of replies to the same message. */
+function threadNoteHtml(run) {
+  const last = run[run.length - 1];
+  const names = [...new Set(run.map((m) => m.author_name))];
+  const who = names.length > 2 ? `${esc(names[0])} and ${names.length - 1} others` : names.map(esc).join(' and ');
+  const what = run.length > 1 ? `${run.length} replies` : `replied: <span class="tn-text">${esc(stripPreview(last.text))}</span>`;
+  const r = last.reply_to;
+  const on = r && !r.deleted ? ` · on <b>${esc(r.author_name)}</b>'s “${esc(r.text)}”` : '';
+  return `<button class="thread-note" data-act="goto-root" data-root="${esc(last.thread_root)}" data-id="${esc(last.id)}" title="Go to the message and its thread">
+    ${icon('reply')}<span class="tn-line"><b>${who}</b> ${what}<span class="tn-on">${on}</span></span><span class="tn-up">↑</span></button>`;
+}
+
+/** First line of Markdown as plain text, for one-line previews. */
+function stripPreview(text) {
+  return String(text || '').replace(/```[\s\S]*?(```|$)/g, ' [code] ').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 /** `newSince` (main view only): messages from others after this time are new since the last visit. */
@@ -1013,8 +1038,12 @@ function messagesHtml(list, inThread, newSince = null) {
   let prev = null;
   let day = '';
   let dividerShown = false;
+  let run = [];
+  const flushRun = () => { if (run.length) { out += threadNoteHtml(run); run = []; prev = null; } };
   for (const m of list) {
     const d = new Date(m.ts).toDateString();
+    const note = !inThread && m.thread_root && !m.in_channel;
+    if (!note || d !== day || (run.length && run[0].thread_root !== m.thread_root)) flushRun();
     if (d !== day) {
       // Each day is a group, so its date line stays pinned at the top only while that day is
       // on screen. Today's line scrolls normally.
@@ -1031,11 +1060,14 @@ function messagesHtml(list, inThread, newSince = null) {
       dividerShown = true;
       prev = null;
     }
-    const grouped = prev && prev.author_id === m.author_id && m.ts - prev.ts < 5 * 60e3 && !prev.deleted && !m.deleted;
+    if (note) { run.push(m); continue; }
+    const grouped = prev && prev.author_id === m.author_id && m.ts - prev.ts < 5 * 60e3 && !prev.deleted && !m.deleted
+      && !(m.thread_root && !inThread);
     const html = messageHtml(m, grouped, inThread);
     out += dividerShown && fresh ? html.replace('class="msg ', 'class="msg fresh ') : html;
     prev = m;
   }
+  flushRun();
   return !inThread && day ? `${out}</section>` : out;
 }
 
@@ -1851,6 +1883,14 @@ function renderSearch(el) {
 
 /** Opens the conversation at a message (a search hit, or `found`: a bookmark): loads history back
  *  to it, or opens its thread. */
+/** Scrolls up to a thread's first message when it is loaded, and opens the thread. */
+function gotoRoot(root) {
+  if (!S.open) return;
+  const m = S.messages.find((x) => x.id === root);
+  openThread(root);
+  if (m) jumpTo(S.open.a, S.open.c, root, m);
+}
+
 async function jumpTo(a, c, id, found = null) {
   const p = found ? null : S.panel;
   const m = found || p?.hits?.find((h) => h.account_id === a && h.id === id);
@@ -2265,6 +2305,8 @@ function onMessageAreaClick(e, inPanel) {
     else openMention(refMsg.account_id, ref.dataset.handle, refMsg.mentions, inPanel ? S.panel : null);
     return;
   }
+  const up = e.target.closest('[data-act="goto-root"]');
+  if (up && !inPanel) { gotoRoot(up.dataset.root); return; }
   const btn = e.target.closest('[data-act]');
   const row = e.target.closest('.msg');
   if (!btn || !row) return;
@@ -2279,7 +2321,7 @@ function onMessageAreaClick(e, inPanel) {
       if (S.openCode.has(m.id)) S.openCode.delete(m.id); else S.openCode.add(m.id);
       row.classList.toggle('code-open', S.openCode.has(m.id));
       break;
-    case 'thread': openThread(m.id); break;
+    case 'thread': openThread(m.thread_root || m.id); break;
     case 'edit': startEdit(m); break;
     case 'delete':
       if (btn.dataset.armed) {

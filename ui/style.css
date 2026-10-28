@@ -187,6 +187,23 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
 .reaction.mine { border-color: var(--accent); }
 .reaction:hover { background: var(--bg-3); }
 .replies { margin-top: 2px; color: var(--accent); font-size: 12px; font-weight: 600; }
+/* A reply shown in the channel: the message it answers, above it. */
+.reply-ctx { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: 1px 0 3px; padding: 2px 8px 2px 6px;
+  border-left: 2px solid var(--line); font-size: 12px; color: var(--fg-2); text-align: left; }
+.reply-ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-ctx b { color: var(--fg); font-weight: 600; }
+.reply-ctx:hover { border-left-color: var(--accent); color: var(--fg); }
+.reply-ctx .i { flex: none; width: 13px; height: 13px; }
+/* Replies that stay in their thread: one quiet line in the conversation. */
+.thread-note { display: flex; align-items: center; gap: 8px; width: calc(100% - 32px); margin: 2px 16px 2px 16px;
+  padding: 3px 8px 3px 44px; border-radius: var(--radius); font-size: 12px; color: var(--fg-2); text-align: left; }
+.thread-note:hover { background: var(--bg-2); color: var(--fg); }
+.thread-note .i { flex: none; width: 13px; height: 13px; color: var(--accent); margin-left: -22px; }
+.thread-note .tn-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-note b { color: var(--fg); font-weight: 600; }
+.thread-note .tn-text { color: var(--fg); }
+.thread-note .tn-up { flex: none; color: var(--accent); font-weight: 600; opacity: .6; }
+.thread-note:hover .tn-up { opacity: 1; }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .attachments img { max-width: 360px; max-height: 240px; border-radius: var(--radius); border: 1px solid var(--line); cursor: zoom-in; }
 .file { border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 8px; }

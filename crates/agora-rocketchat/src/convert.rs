@@ -270,6 +270,7 @@ pub fn message(acc: &str, server: &str, m: &Value, uid_of: &dyn Fn(&str) -> Stri
         reply_count: m["tcount"].as_u64().unwrap_or(0) as u32,
         edited_at: ts(&m["editedAt"]),
         deleted,
+        in_channel: m["tshow"].as_bool().unwrap_or(false),
         mentions,
         reactions,
         attachments,

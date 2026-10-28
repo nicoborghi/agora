@@ -322,6 +322,8 @@ pub fn post(acc: &str, server: &str, p: &Value, keys: &MentionKeys) -> Message {
         reply_count: p["reply_count"].as_u64().unwrap_or(0) as u32,
         edited_at: (edit > 0).then_some(edit),
         deleted: p["delete_at"].as_i64().unwrap_or(0) > 0,
+        // Mattermost shows replies in the channel too (unless the reader collapses threads).
+        in_channel: true,
         reactions,
         attachments,
         links,

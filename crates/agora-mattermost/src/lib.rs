@@ -532,10 +532,10 @@ impl Service for MattermostService {
             // Everything created or changed since then, edits and deletions included.
             (Some(after), _) => format!("/channels/{channel_id}/posts?since={after}"),
             (None, Some(before)) => {
-                format!("/channels/{channel_id}/posts?per_page={}&before={before}&collapsedThreads=true", q.limit.min(200))
+                format!("/channels/{channel_id}/posts?per_page={}&before={before}", q.limit.min(200))
             }
             (None, None) if q.before.is_some() => return Ok(vec![]),
-            (None, None) => format!("/channels/{channel_id}/posts?per_page={}&collapsedThreads=true", q.limit.min(200)),
+            (None, None) => format!("/channels/{channel_id}/posts?per_page={}", q.limit.min(200)),
         };
         let v = self.get(&path).await?;
         let mut msgs = convert::post_list(&self.account_id, &self.server, &v, &self.keys());

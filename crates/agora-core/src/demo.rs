@@ -81,6 +81,7 @@ fn message(acc: &str, ch: &str, id: String, author: &str, ts: Millis, text: &str
         reply_count: 0,
         edited_at: None,
         deleted: false,
+        in_channel: false,
         mentions,
         reactions: vec![],
         attachments: vec![],
