@@ -322,9 +322,33 @@ fn system_text(subtype: &str, who: &str, text: &str) -> Option<String> {
     Some(format!("_{}_", t.replace('_', "\\_")))
 }
 
-/// Unfurls and bot attachments: link previews for the former, Markdown for the latter.
-fn attachments(m: &Value, text: &mut String, links: &mut Vec<LinkPreview>) {
+/// A message shared from another conversation, as a quote: who wrote it, where, and its text.
+fn shared_message(a: &Value, name_of: &dyn Fn(&str) -> Option<String>) -> String {
+    let who = non_empty(&a["author_name"])
+        .or_else(|| non_empty(&a["author_id"]).and_then(|id| name_of(&id)))
+        .unwrap_or_else(|| "Someone".into());
+    let place = non_empty(&a["channel_name"]).map(|c| format!(" in #{c}")).unwrap_or_default();
+    let link = non_empty(&a["from_url"]).map(|u| format!(" · [open]({u})")).unwrap_or_default();
+    let body = non_empty(&a["text"]).or_else(|| non_empty(&a["fallback"])).unwrap_or_default();
+    let body = from_slack(&body, name_of).0;
+    let mut out = format!("> **{who}**{place}{link}");
+    for line in body.lines() {
+        out.push_str("\n> ");
+        out.push_str(line);
+    }
+    out
+}
+
+/// Unfurls, shared messages and bot attachments: link previews, quotes and Markdown.
+fn attachments(m: &Value, text: &mut String, links: &mut Vec<LinkPreview>, name_of: &dyn Fn(&str) -> Option<String>) {
     for a in m["attachments"].as_array().into_iter().flatten() {
+        if a["is_share"].as_bool() == Some(true) || a["is_msg_unfurl"].as_bool() == Some(true) {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&shared_message(a, name_of));
+            continue;
+        }
         let unfurl = non_empty(&a["from_url"]).or_else(|| non_empty(&a["original_url"]));
         if let Some(url) = unfurl {
             if let Some(title) = non_empty(&a["title"]).or_else(|| non_empty(&a["service_name"])) {
@@ -379,7 +403,7 @@ pub fn message(acc: &str, channel_id: &str, m: &Value, name_of: &dyn Fn(&str) ->
         }
     }
     let mut links = Vec::new();
-    attachments(m, &mut text, &mut links);
+    attachments(m, &mut text, &mut links, name_of);
 
     let files = m["files"]
         .as_array()
@@ -455,6 +479,19 @@ mod tests {
         assert_eq!(from_slack("<https://x.org>", &names).0, "https://x.org");
         assert_eq!(from_slack("<@U7>", &names).0, "@U7");
         assert_eq!(from_slack("<@U2|Hervé Aussel> ok", &names).0, "@Hervé\u{a0}Aussel ok");
+    }
+
+    #[test]
+    fn shared_message_is_quoted() {
+        let m = json!({
+            "ts": "1700000000.000300", "user": "U1", "text": "look at this",
+            "attachments": [{ "is_share": true, "is_msg_unfurl": true, "author_name": "Ada Lovelace",
+                "channel_name": "pipeline", "from_url": "https://x.slack.com/archives/C1/p1",
+                "text": "first line\nsecond <@U2>" }]
+        });
+        let msg = message("acc", "C9", &m, &|id| (id == "U2").then(|| "Grace".to_string())).unwrap();
+        assert_eq!(msg.text, "look at this\n\n> **Ada Lovelace** in #pipeline · [open](https://x.slack.com/archives/C1/p1)\n> first line\n> second @Grace");
+        assert!(msg.links.is_empty());
     }
 
     #[test]
