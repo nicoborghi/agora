@@ -780,7 +780,9 @@ input[type="range"] { accent-color: var(--accent); }
 .emoji-tabs button .i { width: 15px; height: 15px; }
 .emoji-tabs button:hover { background: var(--bg-3); color: var(--fg); }
 .emoji-tabs button.on { background: var(--sel-bg); color: var(--fg); }
-.emoji-picker .emoji-grid.wide { grid-template-columns: repeat(10, 28px); height: 248px; max-height: none; align-content: start; }
+.emoji-picker .emoji-grid.wide { grid-template-columns: repeat(10, minmax(0, 1fr)); height: 248px; max-height: none; align-content: start;
+  overflow-x: hidden; scrollbar-gutter: stable; }
+.emoji-picker .emoji-grid button { min-width: 0; overflow: hidden; }
 .emoji-picker .muted { grid-column: 1 / -1; margin: 8px 4px; font-size: 12px; }
 
 /* Drafts: a pencil beside conversations with unsent text. */
