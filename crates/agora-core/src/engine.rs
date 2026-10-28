@@ -985,6 +985,10 @@ impl Engine {
         if let (true, Some((acc, ch))) = (focused, open) {
             let _ = self.mark_read(&acc, &ch);
         }
+        // Coming back to the window is a good moment to try again, without waiting out the backoff.
+        if focused && lock(&self.conn).values().any(|s| matches!(s, ConnState::Offline { .. })) {
+            self.reconnect_all();
+        }
     }
 
     fn mark_read(&self, acc: &str, ch: &str) -> Result<(), String> {

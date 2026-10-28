@@ -538,19 +538,22 @@ function toggleSection(id) {
 
 RENDER.status = function renderStatus() {
   const items = [];
-  let offline = false;
+  const offline = [];
   for (const a of enabledAccounts()) {
     const s = S.conn[a.id];
-    if (s?.state === 'offline') {
-      offline = true;
-      items.push(`${esc(a.name)} offline, retrying in ${s.retry_in}s`);
-    } else if (s?.state === 'auth_expired') {
+    if (s?.state === 'offline') offline.push(a.name);
+    else if (s?.state === 'auth_expired') {
       items.push(`${esc(a.name)}: ${esc(s.reason)} <button data-act="relogin" data-id="${esc(a.id)}">Sign in</button>`);
     }
   }
+  // All offline workspaces on one line; retries keep going on their own.
+  if (offline.length) {
+    items.unshift(`<span title="${esc(offline.join(', '))}">${offline.length > 1 ? `${offline.length} workspaces` : esc(offline[0])} offline</span>
+      <button data-act="reconnect">Retry</button>`);
+  }
   const el = $('#status-line');
   el.hidden = !items.length;
-  el.innerHTML = items.join('<br>') + (offline ? ` <button data-act="reconnect">Retry now</button>` : '');
+  el.innerHTML = items.join('<br>');
 };
 
 // ------------------------------------------------------------ status bar (you)
