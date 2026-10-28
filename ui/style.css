@@ -811,3 +811,38 @@ input[type="range"] { accent-color: var(--accent); }
 #update-bar span { flex: 1; min-width: 0; }
 #update-bar button { color: var(--accent); font-weight: 600; white-space: nowrap; }
 #update-bar button:hover { text-decoration: underline; }
+/* Details panel: about, bookmarks, pins (then images and links). */
+.details .about { padding: 2px 14px 4px; display: grid; gap: 6px; }
+.details .about-row { display: grid; gap: 1px; font-size: 12.5px; }
+.details .about-row .muted { font-size: 11px; }
+.details .bm-link { display: flex; align-items: center; gap: 6px; }
+.details .bm-link .i { flex: none; width: 13px; height: 13px; color: var(--fg-2); }
+.details .pins .hit { cursor: pointer; border-radius: var(--radius); margin: 0 6px; }
+.details .pins .hit:hover { background: var(--bg-2); }
+.details .canvas-list { padding: 0 8px; display: grid; gap: 1px; }
+.canvas-link { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: var(--radius); text-align: left; color: var(--accent); }
+.canvas-link:hover { background: var(--bg-2); }
+.canvas-link .i, .canvas-tabs .i { flex: none; width: 14px; height: 14px; }
+/* A canvas, over the conversation: a compact bar of the conversation's canvases, then the page. */
+#canvas-view { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; background: var(--bg); user-select: text; }
+.canvas-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.canvas-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.canvas-tabs button { flex: none; display: flex; align-items: center; gap: 6px; max-width: 220px; padding: 3px 9px; border-radius: var(--radius); color: var(--fg-2); font-size: 12.5px; }
+.canvas-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-tabs button:hover { background: var(--bg-3); color: var(--fg); }
+.canvas-tabs button.on { background: var(--sel-bg); color: var(--fg); font-weight: 600; }
+.canvas-bar > a { display: grid; place-items: center; width: 28px; height: 26px; color: var(--fg-2); border-radius: var(--radius); }
+.canvas-bar > a:hover { background: var(--bg-3); color: var(--fg); }
+.canvas-bar > a .i { width: 14px; height: 14px; }
+.canvas-body { flex: 1; overflow-y: auto; padding: 18px max(24px, calc((100% - 720px) / 2)) 40px; line-height: 1.55; font-size: 13.5px; }
+.canvas-body .canvas-title { font-size: 22px; margin: 0 0 12px; }
+.canvas-body h1 { font-size: 19px; } .canvas-body h2 { font-size: 16px; } .canvas-body h3 { font-size: 14px; }
+.canvas-body h1, .canvas-body h2, .canvas-body h3 { margin: 18px 0 6px; }
+.canvas-body a { color: var(--accent); }
+.canvas-body table { border-collapse: collapse; margin: 8px 0; }
+.canvas-body td, .canvas-body th { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.canvas-body pre { font: 12px/1.5 var(--mono); background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; overflow-x: auto; }
+.canvas-body code { font: 12px var(--mono); }
+.canvas-body blockquote { border-left: 2px solid var(--line); padding-left: 10px; color: var(--fg-2); margin-left: 0; }
+.canvas-body input[type=checkbox] { margin-right: 6px; vertical-align: -2px; }
+.canvas-body li:has(> input[type=checkbox]) { list-style: none; margin-left: -18px; }

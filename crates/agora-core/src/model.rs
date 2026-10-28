@@ -282,6 +282,44 @@ impl Profile {
     }
 }
 
+/// What a service tells about a conversation beyond its name and topic (the Details panel).
+#[derive(Debug, Clone, Default)]
+pub struct ChannelDetails {
+    /// What the conversation is for (Slack "description", Mattermost "purpose").
+    pub purpose: String,
+    pub created: Option<Millis>,
+    /// User id of whoever created it.
+    pub creator: Option<String>,
+    /// Links saved at the top of the conversation (Slack bookmarks).
+    pub bookmarks: Vec<Bookmark>,
+    /// Pinned messages, newest first.
+    pub pins: Vec<Message>,
+    /// Documents attached to the conversation (Slack canvases), opened with [`Canvas`].
+    pub canvases: Vec<CanvasRef>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CanvasRef {
+    pub id: String,
+    pub title: String,
+}
+
+/// A canvas's content as HTML from the service (the UI keeps only safe formatting) and a link to
+/// open it in the service.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Canvas {
+    pub id: String,
+    pub title: String,
+    pub html: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub title: String,
+    pub url: String,
+}
+
 /// One page of a conversation's members. `next` continues the list; `total` is the member
 /// count when the service reports it.
 #[derive(Debug, Clone, Default)]

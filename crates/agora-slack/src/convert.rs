@@ -12,7 +12,7 @@ pub fn s(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_string()
 }
 
-fn non_empty(v: &Value) -> Option<String> {
+pub fn non_empty(v: &Value) -> Option<String> {
     v.as_str().filter(|x| !x.is_empty()).map(str::to_string)
 }
 

@@ -84,6 +84,8 @@ const PATHS = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-1v-8h8v1"/>',
   mail: '<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2.5 4.5 8 9l5.5-4.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.2V11M8 4.9v.1"/>',
+  page: '<path d="M4 2.5h5.5L12.5 5.5v8H4z"/><path d="M9.5 2.5v3h3M6 8.5h4.5M6 10.8h3"/>',
   // Emoji picker categories.
   clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.3 1.5"/>',
   leaf: '<path d="M3 13c0-6 3.5-9.5 10-10 0 6.5-3.5 10-9 10z"/><path d="M3 13l5.5-5.5"/>',

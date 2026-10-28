@@ -118,6 +118,8 @@ fn main() {
             commands::install_update,
             commands::set_bookmark,
             commands::channel_members,
+            commands::channel_details,
+            commands::get_canvas,
             commands::popup_ready,
             commands::popup_resize,
             commands::popup_closed,

@@ -883,12 +883,13 @@ RENDER.header = function renderHeader() {
   const c = S.open && S.channels.get(key(S.open.a, S.open.c));
   if (!c) { h.innerHTML = ''; return; }
   const acc = account(c.account_id);
-  const where = [c.group, acc?.name].filter(Boolean).join(' · ');
+  // The workspace in view needs no naming; Home, All conversations and Bookmarks mix them.
+  const where = [c.group, railAccount() ? null : acc?.name].filter(Boolean).join(' · ');
   h.innerHTML = `<div class="hdr-title">${glyph(c)}<b>${esc(c.display_name)}</b>
       <span class="svc-name">${esc(where)}</span><span class="topic" title="${esc(c.topic || '')}">${inlineMarkdown(c.topic || '')}</span></div>
     <button class="icon-btn ${c.starred ? 'on' : ''}" data-act="star" title="${c.starred ? 'Remove from favorites' : 'Add to favorites'}">${icon('star')}</button>
     <button class="icon-btn" data-act="prefs" title="Notifications for this conversation${c.muted ? ' (off)' : ''}">${icon(c.muted ? 'bellOff' : 'bell')}</button>
-    <button class="icon-btn ${S.panel?.type === 'gallery' ? 'on' : ''}" data-act="gallery" title="Images and links">${icon('image')}</button>
+    <button class="icon-btn ${S.panel?.type === 'gallery' ? 'on' : ''}" data-act="gallery" title="Details: description, bookmarks, pins, images and links">${icon('info')}</button>
     ${peopleButton(c)}`;
 };
 
@@ -1567,6 +1568,16 @@ function renderPanel(rebuild = false) {
     drawMembers(p);
   } else {
     el.dataset.view = 'gallery';
+    const c = S.open && S.channels.get(key(S.open.a, S.open.c));
+    const d = p.details;
+    const about = [
+      c?.topic ? `<div class="about-row"><span class="muted">Topic</span><div>${inlineMarkdown(c.topic)}</div></div>` : '',
+      d?.purpose ? `<div class="about-row"><span class="muted">Description</span><div>${inlineMarkdown(d.purpose)}</div></div>` : '',
+      d?.created ? `<div class="about-row"><span class="muted">Created</span><div>${esc(new Date(d.created).toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' }))}${d.creator ? ` by ${esc(d.creator)}` : ''}</div></div>` : '',
+    ].join('');
+    const bookmarks = (d?.bookmarks || []).map((b) => `<div class="bm-link">${icon('link')}<a href="${esc(b.url)}" data-url="${esc(b.url)}" title="${esc(b.url)}">${esc(b.title)}</a></div>`).join('');
+    const pins = d?.pins || [];
+    const canvases = (d?.canvases || []).map((cv) => `<button class="canvas-link" data-canvas="${esc(cv.id)}">${icon('page')}<span>${esc(cv.title)}</span></button>`).join('');
     const images = [];
     const links = new Set();
     for (const m of S.messages) {
@@ -1574,8 +1585,13 @@ function renderPanel(rebuild = false) {
       for (const l of m.links || []) links.add(l.url);
       for (const u of extractUrls(m.text)) links.add(u);
     }
-    el.innerHTML = `<div class="panel-head"><span>Images and links</span><button class="icon-btn" data-act="close-panel" title="Close">${icon('close')}</button></div>
-      <div class="panel-body">
+    el.innerHTML = `<div class="panel-head"><span>Details</span><button class="icon-btn" data-act="close-panel" title="Close">${icon('close')}</button></div>
+      <div class="panel-body details">
+        ${about ? `<div class="section">About</div><div class="about">${about}</div>` : ''}
+        ${canvases ? `<div class="section">Canvases</div><div class="canvas-list">${canvases}</div>` : ''}
+        ${bookmarks ? `<div class="section">Bookmarks</div><div class="link-list">${bookmarks}</div>` : ''}
+        ${pins.length ? `<div class="section">Pinned · ${pins.length}</div><div class="pins">${pins.map((m) => `<div class="hit" data-a="${esc(m.account_id)}" data-c="${esc(m.channel_id)}" data-id="${esc(m.id)}" title="Go to the message">${messagesHtml([m], true)}</div>`).join('')}</div>` : ''}
+        ${p.loading ? '<div class="section muted">Loading details...</div>' : ''}${p.error ? `<div class="section muted">${esc(p.error)}</div>` : ''}
         <div class="section">Images</div>
         ${images.length ? `<div class="gallery">${images.map((f) => `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`).join('')}</div>` : '<div class="section muted">None in the loaded messages.</div>'}
         <div class="section">Links</div>
@@ -1584,6 +1600,101 @@ function renderPanel(rebuild = false) {
   }
 }
 RENDER.panel = () => renderPanel(false);
+
+// ------------------------------------------------------------ canvases
+
+const CANVAS_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'OL', 'LI', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'DEL',
+  'A', 'CODE', 'PRE', 'BLOCKQUOTE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'BR', 'HR', 'SPAN', 'DIV', 'INPUT']);
+const CANVAS_DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'BUTTON', 'TEXTAREA', 'SELECT', 'SVG', 'MATH',
+  'HEAD', 'TITLE', 'META', 'LINK', 'NOSCRIPT', 'TEMPLATE', 'IMG', 'VIDEO', 'AUDIO']);
+
+/** A canvas's HTML with only text formatting, lists, tables, checkboxes and web links left. */
+function cleanCanvas(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const walk = (el) => {
+    for (const child of [...el.children]) {
+      if (CANVAS_DROP.has(child.tagName)) { child.remove(); continue; }
+      walk(child);
+      if (!CANVAS_TAGS.has(child.tagName) || (child.tagName === 'INPUT' && child.type !== 'checkbox')) {
+        child.replaceWith(...child.childNodes);
+        continue;
+      }
+      const href = child.tagName === 'A' ? child.getAttribute('href') : null;
+      const checked = child.tagName === 'INPUT' && child.checked;
+      for (const a of [...child.attributes]) child.removeAttribute(a.name);
+      if (href && /^https?:\/\//i.test(href)) { child.setAttribute('href', href); child.dataset.url = href; }
+      // Written as attributes: the cleaned page is kept as HTML text.
+      if (child.tagName === 'INPUT') { child.setAttribute('type', 'checkbox'); child.setAttribute('disabled', ''); if (checked) child.setAttribute('checked', ''); }
+    }
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+
+/** A Slack canvas link (…slack.com/docs/T…/F…): the canvas's file id. */
+const canvasId = (url) => /^https:\/\/[\w.-]*slack\.com\/docs\/T\w+\/(F\w+)/.exec(url)?.[1] || null;
+
+/**
+ * Opens a canvas over the conversation. `list` is the conversation's canvases (from Details),
+ * shown as a compact bar to move from one to another.
+ */
+async function openCanvas(a, id, list = []) {
+  let view = $('#canvas-view');
+  if (!view) {
+    view = document.createElement('div');
+    view.id = 'canvas-view';
+    $('#main').appendChild(view);
+    view.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act="canvas-close"]')) { view.remove(); return; }
+      const tab = e.target.closest('[data-canvas]');
+      if (tab) { openCanvas(view.dataset.a, tab.dataset.canvas, view.list); return; }
+      const link = e.target.closest('a[data-url]');
+      if (link) {
+        e.preventDefault();
+        const other = canvasId(link.dataset.url);
+        if (other) openCanvas(view.dataset.a, other, view.list);
+        else invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x)));
+      }
+    });
+  }
+  if (!list.some((c) => c.id === id)) list = [...list, { id, title: 'Canvas' }];
+  view.dataset.a = a;
+  view.dataset.id = id;
+  view.list = list;
+  const bar = (title, url) => `<div class="canvas-bar">
+      <div class="canvas-tabs">${list.map((c) => `<button data-canvas="${esc(c.id)}" class="${c.id === id ? 'on' : ''}">${icon('page')}<span>${esc(c.id === id && title ? title : c.title)}</span></button>`).join('')}</div>
+      ${url ? `<a href="${esc(url)}" data-url="${esc(url)}" title="Open in Slack">${icon('external')}</a>` : ''}
+      <button class="icon-btn" data-act="canvas-close" title="Close (Esc)">${icon('close')}</button></div>`;
+  view.innerHTML = `${bar('', '')}<div class="canvas-body"><p class="muted">Loading the canvas...</p></div>`;
+  try {
+    const cv = await invoke('get_canvas', { account_id: a, id });
+    if (view.dataset.id !== id || !view.isConnected) return;
+    const entry = list.find((c) => c.id === id);
+    if (entry && cv.title) entry.title = cv.title;
+    const body = cleanCanvas(cv.html);
+    view.innerHTML = `${bar(cv.title, cv.url)}<div class="canvas-body"><h1 class="canvas-title">${esc(cv.title)}</h1>
+      ${body.trim() ? body : '<p class="muted">This canvas is empty, or Slack did not send its content.</p>'}</div>`;
+  } catch (e) {
+    if (view.dataset.id !== id || !view.isConnected) return;
+    view.querySelector('.canvas-body').innerHTML = `<p class="muted">Could not open the canvas: ${esc(String(e))}</p>`;
+  }
+}
+
+/** The Details panel: the service's description, bookmarks and pins, then images and links. */
+async function openDetails() {
+  if (!S.open) return;
+  const { a, c } = S.open;
+  const p = { type: 'gallery', a, c, details: null, loading: true, error: null };
+  S.panel = p;
+  schedule('panel', 'header');
+  try {
+    p.details = await invoke('channel_details', { account_id: a, channel_id: c });
+    // Pins act like search results: a click goes to the message (see `jumpTo`).
+    p.hits = p.messages = p.details.pins;
+  } catch (e) { p.error = String(e); }
+  p.loading = false;
+  if (S.panel === p) schedule('panel');
+}
 
 // ------------------------------------------------------------ people
 
@@ -2355,7 +2466,14 @@ async function openMention(acc, handle, ids = [], back = null) {
 
 function onMessageAreaClick(e, inPanel) {
   const link = e.target.closest('a[data-url]');
-  if (link) { e.preventDefault(); invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x))); return; }
+  if (link) {
+    e.preventDefault();
+    const cv = canvasId(link.dataset.url);
+    const a = inPanel ? S.panel?.a : S.open?.a;
+    if (cv && a && account(a)?.kind === 'slack') { openCanvas(a, cv, S.panel?.details?.canvases || []); return; }
+    invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x)));
+    return;
+  }
   const img = e.target.closest('img[data-full]');
   if (img) { openViewer(img.dataset.full); return; }
   const who = e.target.closest('[data-person]');
@@ -2580,7 +2698,7 @@ function bindUi() {
     const c = S.channels.get(key(S.open.a, S.open.c));
     if (b.dataset.act === 'star') setStarred(c, !c.starred);
     if (b.dataset.act === 'prefs') showPrefs();
-    if (b.dataset.act === 'gallery') { S.panel = S.panel?.type === 'gallery' ? null : { type: 'gallery' }; schedule('panel', 'header'); }
+    if (b.dataset.act === 'gallery') { if (S.panel?.type === 'gallery') { S.panel = null; schedule('panel', 'header'); } else openDetails(); }
     if (b.dataset.act === 'members') {
       if (S.panel?.type === 'members' && S.panel.c === c.id) { S.panel = null; schedule('panel', 'header'); } else openMembers(c.account_id, c.id);
     }
@@ -2649,6 +2767,8 @@ function bindUi() {
       return;
     }
     if (e.target.closest('[data-act="search-remote"]') && S.panel?.type === 'search') { searchRemote(S.panel); return; }
+    const cv = e.target.closest('[data-canvas]');
+    if (cv && S.panel?.type === 'gallery') { openCanvas(S.panel.a, cv.dataset.canvas, S.panel.details?.canvases || []); return; }
     const hit = e.target.closest('.hit');
     if (hit && !e.target.closest('a[data-url], img[data-full], [data-act="toggle-reaction"], [data-person]')) {
       jumpTo(hit.dataset.a, hit.dataset.c, hit.dataset.id);
@@ -2792,6 +2912,8 @@ function bindUi() {
     if (e.key === 'Escape') {
       const viewer = document.querySelector('.viewer');
       if (viewer) { viewer.remove(); return; }
+      const canvas = $('#canvas-view');
+      if (canvas && $('#popover').hidden) { canvas.remove(); return; }
       if (!$('#popover').hidden) closePopover();
       else if (settingsOpen()) { closeSettings(); schedule('rail'); }
       else if (!$('#overlay').hidden) closeOverlay();

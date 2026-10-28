@@ -133,6 +133,17 @@ pub trait Service: Send + Sync {
         Err(ServiceError::Unsupported)
     }
 
+    /// A conversation's description, creator, bookmarks and pinned messages, for its Details
+    /// panel. `Unsupported` shows only what the archive knows.
+    async fn channel_details(&self, _channel_id: &str) -> SResult<ChannelDetails> {
+        Err(ServiceError::Unsupported)
+    }
+
+    /// One canvas (`ChannelDetails::canvases`, or a canvas link in a message).
+    async fn canvas(&self, _id: &str) -> SResult<Canvas> {
+        Err(ServiceError::Unsupported)
+    }
+
     /// Downloads a service path produced by [`crate::model::media_url`] (files, thumbnails,
     /// avatars), so the UI can show content that needs authentication.
     async fn fetch(&self, _path: &str) -> SResult<Media> {

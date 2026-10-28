@@ -913,6 +913,71 @@ impl Service for SlackService {
         Ok(p)
     }
 
+    async fn channel_details(&self, channel_id: &str) -> SResult<ChannelDetails> {
+        let info = self.api("conversations.info", &[("channel", channel_id.to_string())]).await?;
+        let c = &info["channel"];
+        let mut d = ChannelDetails {
+            purpose: convert::from_slack(c["purpose"]["value"].as_str().unwrap_or_default(), &|_| None).0,
+            created: c["created"].as_i64().filter(|t| *t > 0).map(|t| t * 1000),
+            creator: c["creator"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
+            ..Default::default()
+        };
+        // The channel's own canvas, then canvas tabs (each once).
+        let props = &c["properties"];
+        let mut seen = std::collections::HashSet::new();
+        if let Some(id) = props["canvas"]["file_id"].as_str().filter(|_| props["canvas"]["is_empty"].as_bool() != Some(true)) {
+            seen.insert(id.to_string());
+            d.canvases.push(CanvasRef { id: id.to_string(), title: "Channel canvas".into() });
+        }
+        for t in props["tabs"].as_array().into_iter().flatten().filter(|t| t["type"].as_str() == Some("canvas")) {
+            if let Some(id) = t["data"]["file_id"].as_str().filter(|id| seen.insert(id.to_string())) {
+                let title = t["label"].as_str().filter(|l| !l.is_empty()).unwrap_or("Canvas");
+                d.canvases.push(CanvasRef { id: id.to_string(), title: title.to_string() });
+            }
+        }
+        // Bookmarks and pins are extras: a workspace that refuses them still shows the rest.
+        if let Ok(v) = self.api("bookmarks.list", &[("channel_id", channel_id.to_string())]).await {
+            d.bookmarks = v["bookmarks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|b| {
+                    let url = b["link"].as_str().filter(|u| !u.is_empty())?.to_string();
+                    let title = b["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(&url).to_string();
+                    Some(Bookmark { title, url })
+                })
+                .collect();
+        }
+        if let Ok(v) = self.api("pins.list", &[("channel", channel_id.to_string())]).await {
+            let msgs: Vec<Value> = v["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|i| i["type"].as_str() == Some("message"))
+                .map(|i| i["message"].clone())
+                .collect();
+            d.pins = self.convert(channel_id, &msgs).await;
+            d.pins.sort_by_key(|m| std::cmp::Reverse(m.ts));
+        }
+        Ok(d)
+    }
+
+    async fn canvas(&self, id: &str) -> SResult<Canvas> {
+        let v = self.api("files.info", &[("file", id.to_string())]).await?;
+        let f = &v["file"];
+        let title = s(&f["title"]);
+        let url = s(&f["permalink"]);
+        let source = convert::non_empty(&f["url_private_download"]).or_else(|| convert::non_empty(&f["url_private"]));
+        let Some(source) = source else { return Ok(Canvas { id: id.into(), title, html: String::new(), url }) };
+        // Canvases download as an HTML document (unlike images, which `fetch_url` handles).
+        let resp = self.http.get(&source).bearer_auth(&self.creds.token).header("Cookie", self.cookie()).send().await.map_err(net)?;
+        if !resp.status().is_success() {
+            return Err(ServiceError::Other(format!("HTTP {}", resp.status())));
+        }
+        let html = resp.text().await.map_err(net)?;
+        Ok(Canvas { id: id.into(), title, html, url })
+    }
+
     async fn members(&self, channel_id: &str, cursor: Option<&str>) -> SResult<MemberPage> {
         let mut params = vec![("channel", channel_id.to_string()), ("limit", "200".to_string())];
         if let Some(c) = cursor {

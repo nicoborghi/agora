@@ -56,6 +56,17 @@ pub struct MessageView {
     pub reply_to: Option<RootPreview>,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ChannelDetailsView {
+    pub purpose: String,
+    pub created: Option<Millis>,
+    /// Creator's display name.
+    pub creator: Option<String>,
+    pub bookmarks: Vec<Bookmark>,
+    pub pins: Vec<MessageView>,
+    pub canvases: Vec<CanvasRef>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RootPreview {
     pub author_name: String,
@@ -1295,6 +1306,31 @@ impl Engine {
 
     /// One page of a conversation's members (names saved to the archive so mentions resolve).
     /// Services without a members call use the list the conversation came with.
+    /// The Details panel: what the service tells about the conversation, pins with authors.
+    pub async fn channel_details(&self, acc: &str, ch: &str) -> Result<ChannelDetailsView, String> {
+        let Some(svc) = self.service(acc) else { return Ok(ChannelDetailsView::default()) };
+        let d = match svc.channel_details(ch).await {
+            Ok(d) => d,
+            Err(ServiceError::Unsupported) => return Ok(ChannelDetailsView::default()),
+            Err(e) => return Err(e.to_string()),
+        };
+        self.fill_users(acc, &svc, &d.pins).await;
+        let creator = match &d.creator {
+            Some(id) => Some(self.store.user_name(acc, id).map_err(err)?),
+            None => None,
+        };
+        let pins = d.pins.into_iter().map(|m| self.message_view(m)).collect::<StoreResult<Vec<_>>>().map_err(err)?;
+        Ok(ChannelDetailsView { purpose: d.purpose, created: d.created, creator, bookmarks: d.bookmarks, pins, canvases: d.canvases })
+    }
+
+    pub async fn canvas(&self, acc: &str, id: &str) -> Result<Canvas, String> {
+        let svc = self.connected(acc)?;
+        svc.canvas(id).await.map_err(|e| match e {
+            ServiceError::Unsupported => "This workspace has no canvases.".to_string(),
+            e => e.to_string(),
+        })
+    }
+
     pub async fn members(&self, acc: &str, ch: &str, cursor: Option<&str>) -> Result<MembersView, String> {
         let page = match self.service(acc) {
             Some(svc) => match svc.members(ch, cursor).await {
