@@ -2185,11 +2185,71 @@ function closeOverlay() {
   ov.className = '';
 }
 
+/**
+ * Full-screen image: wheel zooms around the pointer, drag pans, double-click switches between
+ * fitted and actual size, + - 0 on the keyboard. A click outside the image closes it.
+ */
 function openViewer(src) {
   const v = document.createElement('div');
   v.className = 'viewer';
-  v.innerHTML = `<img src="${esc(src)}" alt="">`;
-  v.addEventListener('click', () => v.remove());
+  v.innerHTML = `<img src="${esc(src)}" alt="" draggable="false">
+    <div class="viewer-bar">
+      <button data-z="out" title="Zoom out (-)">−</button><span class="viewer-pct">100%</span><button data-z="in" title="Zoom in (+)">+</button>
+      <button data-z="fit" title="Fit to screen (0)">Fit</button><button data-z="close" title="Close (Esc)">${icon('close')}</button>
+    </div>`;
+  const img = v.querySelector('img');
+  const pct = v.querySelector('.viewer-pct');
+  // `scale` is relative to the fitted size; x/y move the image's centre from the screen's centre.
+  let scale = 1, x = 0, y = 0;
+  const natural = () => (img.naturalWidth && img.width ? img.naturalWidth / img.width : 1);
+  const max = () => Math.max(8, natural() * 4);
+  // A click on the fitted image: actual size for a large image, twice as big for a small one.
+  const closer = () => (natural() > 1.1 ? natural() : 2);
+  const draw = () => {
+    img.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    pct.textContent = `${Math.round(scale / natural() * 100)}%`;
+    v.classList.toggle('zoomed', scale > 1.001);
+  };
+  // Zooms to `next`, keeping the point under (cx, cy) where it is.
+  const zoomTo = (next, cx = innerWidth / 2, cy = innerHeight / 2) => {
+    next = Math.min(max(), Math.max(1, next));
+    const ox = cx - innerWidth / 2 - x, oy = cy - innerHeight / 2 - y;
+    x += ox - ox * (next / scale);
+    y += oy - oy * (next / scale);
+    scale = next;
+    if (scale === 1) x = y = 0;
+    draw();
+  };
+  v.zoom = (how) => {
+    if (how === 'in') zoomTo(scale * 1.25);
+    else if (how === 'out') zoomTo(scale / 1.25);
+    else if (how === 'fit') zoomTo(1);
+  };
+  img.addEventListener('load', draw);
+  v.addEventListener('wheel', (e) => { e.preventDefault(); zoomTo(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY); }, { passive: false });
+  img.addEventListener('dblclick', (e) => zoomTo(scale > 1.001 ? 1 : closer(), e.clientX, e.clientY));
+  let drag = null;
+  let moved = false;
+  img.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    drag = { sx: e.clientX, sy: e.clientY, x, y };
+    moved = false;
+    img.setPointerCapture(e.pointerId);
+  });
+  img.addEventListener('pointermove', (e) => {
+    if (!drag || scale <= 1.001) return;
+    if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 3) moved = true;
+    x = drag.x + e.clientX - drag.sx;
+    y = drag.y + e.clientY - drag.sy;
+    draw();
+  });
+  img.addEventListener('pointerup', () => { drag = null; });
+  v.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-z]');
+    if (b) { if (b.dataset.z === 'close') v.remove(); else v.zoom(b.dataset.z); return; }
+    if (e.target === img) { if (!moved && scale <= 1.001) zoomTo(closer(), e.clientX, e.clientY); return; }
+    if (!e.target.closest('.viewer-bar')) v.remove();
+  });
   document.body.appendChild(v);
 }
 
@@ -2724,6 +2784,9 @@ function bindUi() {
     }
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); toggleSettings(); return; }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); togglePreview(); return; }
+    const open = document.querySelector('.viewer');
+    const zoomKey = { '+': 'in', '=': 'in', '-': 'out', 0: 'fit' }[e.key];
+    if (open && zoomKey && !e.ctrlKey) { e.preventDefault(); open.zoom(zoomKey); return; }
     if (e.key === 'Escape') {
       const viewer = document.querySelector('.viewer');
       if (viewer) { viewer.remove(); return; }
