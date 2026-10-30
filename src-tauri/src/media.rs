@@ -41,12 +41,20 @@ async fn serve(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
     }
     match state.engine.fetch_media(account, &format!("/{rest}")).await {
         Ok(media) => {
-            if let Some(file) = file {
-                let limit = state.engine.settings().image_cache_mb.saturating_mul(1_000_000);
-                let (mime, bytes) = (media.mime.clone(), media.bytes.clone());
-                tauri::async_runtime::spawn_blocking(move || store(&file, &mime, &bytes, limit));
+            let Some(file) = file else { return ok(media.mime, media.bytes) };
+            // Written to the cache first, then the same bytes answer: no second copy of large files.
+            let limit = state.engine.settings().image_cache_mb.saturating_mul(1_000_000);
+            let mime = media.mime.clone();
+            let bytes = media.bytes;
+            match tauri::async_runtime::spawn_blocking(move || {
+                store(&file, &mime, &bytes, limit);
+                bytes
+            })
+            .await
+            {
+                Ok(bytes) => ok(media.mime, bytes),
+                Err(_) => status(StatusCode::INTERNAL_SERVER_ERROR, "error"),
             }
-            ok(media.mime, media.bytes)
         }
         Err(e) => status(StatusCode::BAD_GATEWAY, &e),
     }

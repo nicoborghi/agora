@@ -284,6 +284,16 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
 .pdf-bar .btn { display: flex; align-items: center; gap: 6px; }
 .pdf-bar .i { width: 14px; height: 14px; flex: none; }
 .pdf-viewer iframe { flex: 1; width: 100%; border: 0; border-radius: 0 0 10px 10px; background: #fff; }
+.pdf-loading { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; text-align: center; color: #eee; pointer-events: none; font-weight: 600; }
+.pdf-loading small { font-weight: 400; opacity: .7; }
+.pdf-viewer:has(.pdf-loading) iframe { visibility: hidden; }
+/* The map: the whole image, small, on the right, with the part on screen outlined. */
+.viewer-map { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); display: none; max-width: 180px; max-height: 180px;
+  border: 1px solid rgba(255, 255, 255, .35); border-radius: 6px; overflow: hidden; background: rgba(0, 0, 0, .55);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4); cursor: crosshair; touch-action: none; }
+.viewer.zoomed .viewer-map { display: block; }
+.viewer .viewer-map img { display: block; max-width: 180px; max-height: 180px; transform: none; cursor: crosshair; opacity: .85; }
+.vm-box { position: absolute; border: 2px solid #fff; border-radius: 2px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .35); pointer-events: none; }
 .viewer-bar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
   padding: 4px; border-radius: 8px; background: rgba(20, 20, 24, .8); color: #eee; font-size: 12px; cursor: default; }
 .viewer-bar button { min-width: 28px; height: 26px; padding: 0 8px; border-radius: 6px; color: inherit; font-size: 14px; display: grid; place-items: center; }

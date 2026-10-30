@@ -1004,7 +1004,9 @@ function openPdfViewer(a, path, name) {
   v.innerHTML = `<div class="pdf-bar"><span class="pdf-name">${icon('page')}${esc(name)}</span>
       <button class="btn" data-pdf="app">${icon('external')}Open in app</button>
       <button class="icon-btn" data-pdf="close" title="Close (Esc)">${icon('close')}</button></div>
+    <div class="pdf-loading">Loading ${esc(name)}...<small>The first time, the whole file is downloaded; afterwards it opens from the cache.</small></div>
     <iframe src="${esc(`${MEDIA_ORIGIN}/${a}${path}`)}" title="${esc(name)}"></iframe>`;
+  v.querySelector('iframe').addEventListener('load', () => v.querySelector('.pdf-loading')?.remove());
   v.addEventListener('click', (e) => {
     const b = e.target.closest('[data-pdf]');
     if (b?.dataset.pdf === 'close' || e.target === v) v.remove();
@@ -2530,18 +2532,22 @@ function closeOverlay() {
 
 /**
  * Full-screen image: wheel zooms around the pointer, drag pans, double-click switches between
- * fitted and actual size, + - 0 on the keyboard. A click outside the image closes it.
+ * fitted and actual size, + - 0 on the keyboard. A click outside the image closes it. When
+ * zoomed, a small map on the right shows the whole image and the part on screen.
  */
 function openViewer(src) {
   const v = document.createElement('div');
   v.className = 'viewer';
   v.innerHTML = `<img src="${esc(src)}" alt="" draggable="false">
+    <div class="viewer-map" title="Click or drag to move"><img src="${esc(src)}" alt="" draggable="false"><i class="vm-box"></i></div>
     <div class="viewer-bar">
       <button data-z="out" title="Zoom out (-)">−</button><span class="viewer-pct">100%</span><button data-z="in" title="Zoom in (+)">+</button>
       <button data-z="fit" title="Fit to screen (0)">Fit</button><button data-z="close" title="Close (Esc)">${icon('close')}</button>
     </div>`;
-  const img = v.querySelector('img');
+  const img = v.querySelector(':scope > img');
   const pct = v.querySelector('.viewer-pct');
+  const map = v.querySelector('.viewer-map');
+  const box = map.querySelector('.vm-box');
   // `scale` is relative to the fitted size; x/y move the image's centre from the screen's centre.
   let scale = 1, x = 0, y = 0;
   const natural = () => (img.naturalWidth && img.width ? img.naturalWidth / img.width : 1);
@@ -2552,7 +2558,30 @@ function openViewer(src) {
     img.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     pct.textContent = `${Math.round(scale / natural() * 100)}%`;
     v.classList.toggle('zoomed', scale > 1.001);
+    drawMap();
   };
+  // The part on screen, as fractions of the image: the image's centre is the screen's centre
+  // moved by (x, y), and it is `scale` times its fitted size.
+  const drawMap = () => {
+    if (scale <= 1.001 || !img.width) return;
+    const w = img.width * scale, h = img.height * scale;
+    const left = innerWidth / 2 + x - w / 2, top = innerHeight / 2 + y - h / 2;
+    const clamp = (f) => Math.min(1, Math.max(0, f));
+    const fx = clamp(-left / w), fy = clamp(-top / h);
+    const fw = clamp((innerWidth - left) / w) - fx, fh = clamp((innerHeight - top) / h) - fy;
+    Object.assign(box.style, { left: `${fx * 100}%`, top: `${fy * 100}%`, width: `${fw * 100}%`, height: `${fh * 100}%` });
+  };
+  // A point of the map comes to the middle of the screen.
+  const moveTo = (e) => {
+    const r = map.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    x = img.width * scale * (0.5 - fx);
+    y = img.height * scale * (0.5 - fy);
+    draw();
+  };
+  map.addEventListener('pointerdown', (e) => { e.stopPropagation(); map.setPointerCapture(e.pointerId); moveTo(e); });
+  map.addEventListener('pointermove', (e) => { if (map.hasPointerCapture(e.pointerId)) moveTo(e); });
   // Zooms to `next`, keeping the point under (cx, cy) where it is.
   const zoomTo = (next, cx = innerWidth / 2, cy = innerHeight / 2) => {
     next = Math.min(max(), Math.max(1, next));
@@ -2591,7 +2620,7 @@ function openViewer(src) {
     const b = e.target.closest('[data-z]');
     if (b) { if (b.dataset.z === 'close') v.remove(); else v.zoom(b.dataset.z); return; }
     if (e.target === img) { if (!moved && scale <= 1.001) zoomTo(closer(), e.clientX, e.clientY); return; }
-    if (!e.target.closest('.viewer-bar')) v.remove();
+    if (!e.target.closest('.viewer-bar, .viewer-map')) v.remove();
   });
   document.body.appendChild(v);
 }
