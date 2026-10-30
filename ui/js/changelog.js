@@ -5,7 +5,7 @@ export const CHANGES = [
   {
     version: '0.3.0',
     items: [
-      ['PDFs inside Agora', 'PDFs open in Agora with zoom and a map of the pages on the right; other files open in your usual app. No more web login.'],
+      ['PDFs inside Agora', 'PDFs show their first page in the conversation and open in Agora with zoom and a map of the pages. Other files open in your usual app. No more web login.'],
       ['Thread replies you can reach', 'Popups and Home open a reply right inside its thread. Unread dots no longer come back after reconnecting.'],
       ['Replies in the main chat', 'Replies sent to the conversation quote the original once, and folded thread lines show the latest reply.'],
       ['New message menu', 'Copy a link to a message, mark it unread, or copy its text from the … button.'],
