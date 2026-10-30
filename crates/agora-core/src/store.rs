@@ -638,6 +638,19 @@ impl Store {
         Ok(())
     }
 
+    /// Read position just before `ts`; unread counts the top-level messages of others from there.
+    pub fn mark_unread_local(&self, acc: &str, id: &str, ts: Millis, self_id: &str) -> StoreResult<()> {
+        self.db().execute(
+            "UPDATE channels SET last_read = ?3 - 1,
+                 unread = (SELECT COUNT(*) FROM messages
+                           WHERE account_id = ?1 AND channel_id = ?2 AND ts >= ?3
+                             AND thread_root IS NULL AND deleted = 0 AND author_id != ?4)
+             WHERE account_id = ?1 AND id = ?2",
+            params![acc, id, ts, self_id],
+        )?;
+        Ok(())
+    }
+
     pub fn sync_states(&self, acc: &str) -> StoreResult<Vec<ChannelSyncState>> {
         let db = self.db();
         let mut st = db.prepare(

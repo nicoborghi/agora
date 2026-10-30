@@ -747,10 +747,13 @@ impl Service for SlackService {
         Ok(msgs)
     }
 
-    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>) -> SResult<Message> {
+    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, broadcast: bool) -> SResult<Message> {
         let mut params = vec![("channel", channel_id.to_string()), ("text", convert::to_slack(text)), ("link_names", "true".into())];
         if let Some(root) = thread_root {
             params.push(("thread_ts", root.to_string()));
+            if broadcast {
+                params.push(("reply_broadcast", "true".into()));
+            }
         }
         let v = self.api("chat.postMessage", &params).await?;
         self.convert(channel_id, std::slice::from_ref(&v["message"]))
@@ -782,6 +785,40 @@ impl Service for SlackService {
     async fn mark_read(&self, channel_id: &str, latest: Option<&Message>) -> SResult<()> {
         let ts = latest.map(|m| m.id.clone()).unwrap_or_else(|| slack_ts(now_ms()));
         self.api("conversations.mark", &[("channel", channel_id.to_string()), ("ts", ts)]).await.map(drop)
+    }
+
+    async fn permalink(&self, channel: &Channel, message_id: &str) -> SResult<String> {
+        let v = self.api("chat.getPermalink", &[("channel", channel.id.clone()), ("message_ts", message_id.to_string())]).await?;
+        v["permalink"].as_str().map(str::to_string).ok_or_else(|| ServiceError::Other("Slack returned no link".into()))
+    }
+
+    async fn open_dm(&self, user: &User) -> SResult<Channel> {
+        let v = self.api("conversations.open", &[("users", user.id.clone()), ("return_im", "true".into())]).await?;
+        let id = s(&v["channel"]["id"]);
+        self.fetch_channel(&id).await
+    }
+
+    /// Slack keeps one read position per conversation: just before this message.
+    async fn mark_unread(&self, channel_id: &str, message: &Message) -> SResult<()> {
+        let before = slack_ts(message.ts - 1);
+        self.api("conversations.mark", &[("channel", channel_id.to_string()), ("ts", before)]).await.map(drop)
+    }
+
+    async fn custom_emoji(&self) -> SResult<Vec<(String, String)>> {
+        let v = self.api("emoji.list", &[]).await?;
+        let Some(all) = v["emoji"].as_object() else { return Ok(vec![]) };
+        // Aliases ("alias:other") point at another custom emoji.
+        let url_of = |name: &str| -> Option<String> {
+            let mut target = all.get(name)?.as_str()?;
+            for _ in 0..3 {
+                match target.strip_prefix("alias:") {
+                    Some(other) => target = all.get(other)?.as_str()?,
+                    None => return Some(target.to_string()),
+                }
+            }
+            None
+        };
+        Ok(all.keys().filter_map(|name| url_of(name).map(|u| (name.clone(), u))).collect())
     }
 
     /// Not in Slack's public API, but what its web client calls; a failure only leaves the

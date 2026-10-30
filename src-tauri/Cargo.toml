@@ -16,6 +16,10 @@ agora-slack = { path = "../crates/agora-slack" }
 tauri = { version = "2", features = ["tray-icon"] }
 # Signed self-update from the GitHub releases (latest.json); checked by commands::check_update.
 tauri-plugin-updater = "2"
+# A second start brings the running Agora to the front (one tray icon, one archive).
+tauri-plugin-single-instance = "2"
+# "Start at login" (Settings → Advanced), started hidden in the tray.
+tauri-plugin-autostart = "2"
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

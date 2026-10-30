@@ -217,6 +217,10 @@ pub struct Engine {
     dots: Mutex<HashMap<Key, String>>,
     /// Threads whose new replies counted for the user, per conversation, until read.
     unread_threads: Mutex<HashMap<Key, HashSet<String>>>,
+    /// Conversations the user marked unread while looking at them: not read again until left.
+    held_unread: Mutex<HashSet<Key>>,
+    /// Workspace emoji per account (name to picture), fetched once.
+    custom_emoji: Mutex<HashMap<AccountId, Arc<HashMap<String, String>>>>,
     view: Mutex<View>,
     pending_reads: Arc<Mutex<HashMap<Key, Message>>>,
     /// Conversations whose full server history is already local.
@@ -274,6 +278,8 @@ impl Engine {
             presence: Mutex::default(),
             dots: Mutex::default(),
             unread_threads: Mutex::default(),
+            held_unread: Mutex::default(),
+            custom_emoji: Mutex::default(),
             view: Mutex::default(),
             pending_reads: Arc::default(),
             exhausted: Mutex::default(),
@@ -620,7 +626,8 @@ impl Engine {
                 lock(&self.unread_threads).entry((acc.to_string(), m.channel_id.clone())).or_default().insert(root.clone());
             }
         }
-        if viewing && !is_self {
+        let held = lock(&self.held_unread).contains(&(acc.to_string(), m.channel_id.clone()));
+        if viewing && !is_self && !held {
             self.queue_mark_read(acc, m.clone());
         }
 
@@ -1026,6 +1033,8 @@ impl Engine {
 
     /// The UI opened a conversation (or closed all with `None`).
     pub fn open_channel(&self, target: Option<(AccountId, String)>) -> Result<(), String> {
+        // Leaving a conversation marked unread lets it be read again next time.
+        lock(&self.held_unread).retain(|k| target.as_ref() == Some(k));
         let focused = {
             let mut v = lock(&self.view);
             v.open = target.clone();
@@ -1053,6 +1062,9 @@ impl Engine {
     }
 
     fn mark_read(&self, acc: &str, ch: &str) -> Result<(), String> {
+        if lock(&self.held_unread).contains(&(acc.to_string(), ch.to_string())) {
+            return Ok(());
+        }
         let Some(c) = self.store.get_channel(acc, ch).map_err(err)? else { return Ok(()) };
         let has_dot = lock(&self.dots).contains_key(&(acc.to_string(), ch.to_string()));
         if c.unread == 0 && c.mentions == 0 && !has_dot {
@@ -1103,9 +1115,10 @@ impl Engine {
         ch: &str,
         text: &str,
         thread_root: Option<&str>,
+        broadcast: bool,
     ) -> Result<MessageView, String> {
         let svc = self.connected(acc)?;
-        let m = svc.send(ch, text, thread_root).await.map_err(err)?;
+        let m = svc.send(ch, text, thread_root, broadcast).await.map_err(err)?;
         self.ingest(acc, m.clone(), false).map_err(err)?;
         self.message_view(m).map_err(err)
     }
@@ -1406,6 +1419,54 @@ impl Engine {
         }
         std::fs::rename(&part, &target).map_err(err)?;
         Ok(target)
+    }
+
+    /// A link to a message, to paste elsewhere.
+    pub async fn permalink(&self, acc: &str, ch: &str, id: &str) -> Result<String, String> {
+        let channel = self.store.get_channel(acc, ch).map_err(err)?.ok_or("unknown conversation")?;
+        self.connected(acc)?.permalink(&channel, id).await.map_err(|e| match e {
+            ServiceError::Unsupported => "This workspace has no message links.".to_string(),
+            e => e.to_string(),
+        })
+    }
+
+    /// Opens a direct conversation with someone (made on the service when there is none yet).
+    pub async fn open_dm(&self, acc: &str, user_id: &str) -> Result<String, String> {
+        let user = self.store.get_user(acc, user_id).map_err(err)?.ok_or("unknown person")?;
+        let channel = self.connected(acc)?.open_dm(&user).await.map_err(|e| match e {
+            ServiceError::Unsupported => "This workspace cannot start conversations here.".to_string(),
+            e => e.to_string(),
+        })?;
+        let id = channel.id.clone();
+        self.store.upsert_channels(std::slice::from_ref(&channel)).map_err(err)?;
+        self.emit_channel(acc, &id).map_err(err)?;
+        Ok(id)
+    }
+
+    /// Makes a message and what follows unread again, here and on the service.
+    pub async fn mark_unread(&self, acc: &str, ch: &str, id: &str) -> Result<(), String> {
+        let m = self.store.get_message(acc, ch, id).map_err(err)?.ok_or("unknown message")?;
+        let svc = self.connected(acc)?;
+        svc.mark_unread(ch, &m).await.map_err(|e| match e {
+            ServiceError::Unsupported => "This workspace cannot mark messages unread.".to_string(),
+            e => e.to_string(),
+        })?;
+        lock(&self.held_unread).insert((acc.to_string(), ch.to_string()));
+        let me = self.self_id(acc).unwrap_or_default();
+        self.store.mark_unread_local(acc, ch, m.ts, &me).map_err(err)?;
+        self.emit_channel(acc, ch).map_err(err)
+    }
+
+    /// The workspace's own emoji, fetched on first use and kept for the session.
+    pub async fn custom_emoji(&self, acc: &str) -> Result<Arc<HashMap<String, String>>, String> {
+        if let Some(known) = lock(&self.custom_emoji).get(acc) {
+            return Ok(known.clone());
+        }
+        let Some(svc) = self.service(acc) else { return Ok(Arc::default()) };
+        let list: HashMap<String, String> = svc.custom_emoji().await.map_err(err)?.into_iter().collect();
+        let list = Arc::new(list);
+        lock(&self.custom_emoji).insert(acc.to_string(), list.clone());
+        Ok(list)
     }
 
     pub async fn canvas(&self, acc: &str, id: &str) -> Result<Canvas, String> {

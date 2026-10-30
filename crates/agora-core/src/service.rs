@@ -75,7 +75,8 @@ pub trait Service: Send + Sync {
     async fn thread(&self, channel_id: &str, root_id: &str) -> SResult<Vec<Message>>;
 
     /// `text` is standard Markdown; the connector converts it for its service.
-    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>) -> SResult<Message>;
+    /// `broadcast`: a thread reply that also goes to the conversation, where the service has that.
+    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, broadcast: bool) -> SResult<Message>;
 
     async fn edit(&self, channel_id: &str, message_id: &str, text: &str) -> SResult<()>;
 
@@ -84,6 +85,27 @@ pub trait Service: Send + Sync {
     async fn react(&self, channel_id: &str, message_id: &str, emoji: &str, add: bool) -> SResult<()>;
 
     async fn mark_read(&self, channel_id: &str, latest: Option<&Message>) -> SResult<()>;
+
+/// A link to a message that opens it in the service (to paste in a mail or a paper).
+    async fn permalink(&self, _channel: &Channel, _message_id: &str) -> SResult<String> {
+        Err(ServiceError::Unsupported)
+    }
+
+    /// Opens (or finds) the direct conversation with someone.
+    async fn open_dm(&self, _user: &User) -> SResult<Channel> {
+        Err(ServiceError::Unsupported)
+    }
+
+    /// Makes `message` and everything after it unread again.
+    async fn mark_unread(&self, _channel_id: &str, _message: &Message) -> SResult<()> {
+        Err(ServiceError::Unsupported)
+    }
+
+    /// The workspace's own emoji: name and picture URL (a [`crate::model::media_url`] when the
+    /// picture needs the account's sign-in).
+    async fn custom_emoji(&self) -> SResult<Vec<(String, String)>> {
+        Ok(vec![])
+    }
 
     /// Marks one thread read up to `latest` (its newest reply), where the service keeps thread
     /// read state apart from the conversation's. Otherwise nothing to do.

@@ -2,9 +2,10 @@
 // render function rebuilds one region from it. Only the open conversation's
 // messages live in memory (capped), everything else stays in the Rust archive.
 import { invoke, listen, esc, initials, toast, icon, OS } from './api.js';
-import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls } from './markdown.js';
+import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls, setCustomEmoji } from './markdown.js';
 import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
+import { CHANGES, compareVersions } from './changelog.js';
 import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged } from './settings.js';
 
 const PAGE = 50;
@@ -15,6 +16,8 @@ export const S = {
   accounts: [],
   /** Messages whose long code blocks were opened. */
   openCode: new Set(),
+  /** Workspace emoji per account: name to picture URL. */
+  customEmoji: {},
   conn: {},
   channels: new Map(),
   settings: null,
@@ -84,11 +87,18 @@ async function init() {
   await listen('agora', onEvent);
   S.drafts = load('drafts') || {};
   loadBookmarks();
+  // After an update, once: what changed since the version used before.
+  // Versions before 0.3.0 did not record it: someone with workspaces is updating, not new.
+  const seen = load('seen-version') || (S.accounts.length ? CHANGES.find((c) => compareVersions(c.version, S.settings.version) < 0)?.version : null);
+  if (seen && compareVersions(S.settings.version, seen) > 0) setTimeout(() => showWhatsNew(seen), 1200);
+  if (seen !== S.settings.version) save('seen-version', S.settings.version);
   // Updates: a quiet check shortly after start, then every 6 hours.
   setTimeout(() => checkForUpdate(false), 20e3);
   setInterval(() => checkForUpdate(false), 6 * 3600e3);
   await listen('agora-sound', playSound);
   await listen('agora-open', (p) => openTarget(p.account_id, p.channel_id, p.message_id, p.thread_root));
+  setCustomEmoji((a, name) => S.customEmoji[a]?.[name]);
+  S.accounts.filter((a) => S.conn[a.id]?.state === 'online').forEach((a) => loadCustomEmoji(a.id));
   bindUi();
   refreshAll();
   const last = load('last-open');
@@ -179,6 +189,7 @@ function onEvent(ev) {
   switch (ev.type) {
     case 'connection':
       S.conn[ev.account_id] = ev.state;
+      if (ev.state?.state === 'online' && !S.customEmoji[ev.account_id]) loadCustomEmoji(ev.account_id);
       schedule('rail', 'status', 'home');
       break;
     case 'message':
@@ -927,7 +938,7 @@ function reactionsHtml(m) {
   if (!m.reactions?.length) return '';
   const me = account(m.account_id)?.self_user_id;
   return `<div class="reactions">${m.reactions.map((r) => `<button class="reaction ${r.users.includes(me) ? 'mine' : ''}"
-    data-act="toggle-reaction" data-emoji="${esc(r.emoji)}" title=":${esc(r.emoji)}: ${esc(reactorNames(m, r))} (right-click for the list)">${emoji(r.emoji)} ${r.users.length}</button>`).join('')}</div>`;
+    data-act="toggle-reaction" data-emoji="${esc(r.emoji)}" title=":${esc(r.emoji)}: ${esc(reactorNames(m, r))} (right-click for the list)">${emoji(r.emoji, m.account_id)} ${r.users.length}</button>`).join('')}</div>`;
 }
 
 /** Everyone who reacted with one emoji, with their picture; a name opens their profile. */
@@ -997,6 +1008,7 @@ function toolsHtml(m, inThread) {
     <button class="icon-btn" data-act="react" title="Add reaction">${icon('smile')}</button>
     <button class="icon-btn ${marked ? 'on' : ''}" data-act="bookmark" title="${marked ? 'Remove bookmark' : 'Bookmark'}">${icon('bookmark')}</button>
     ${inThread ? '' : `<button class="icon-btn" data-act="thread" title="Reply in thread">${icon('reply')}</button>`}
+    <button class="icon-btn" data-act="msg-more" title="More: copy link, mark unread">${icon('more')}</button>
     ${m.is_self ? `<button class="icon-btn" data-act="edit" title="Edit">${icon('edit')}</button>
       <button class="icon-btn" data-act="delete" title="Delete (click twice)">${icon('trash')}</button>` : ''}</div>`;
 }
@@ -1024,7 +1036,7 @@ function namedChannelRefs(html, acc) {
 /** `quoted`: the message this reply answers is already shown just above (by the run). */
 function messageHtml(m, grouped, inThread, quoted = false) {
   // Rendered once per message object: an edit or reaction arrives as a new object.
-  let body = m.deleted ? '<span class="deleted">Message deleted</span>' : (m._html ??= namedChannelRefs(renderMarkdown(m.text), m.account_id));
+  let body = m.deleted ? '<span class="deleted">Message deleted</span>' : (m._html ??= namedChannelRefs(renderMarkdown(m.text, m.account_id), m.account_id));
   let edited = m.edited_at && !m.deleted ? '<span class="edited">(edited)</span>' : '';
   // Keep the label on the last line of text instead of a line of its own.
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
@@ -1243,8 +1255,10 @@ const FORMATS = [
   ['quote', 'Quote', icon('quote')],
 ];
 
+const formatButtons = () => FORMATS.map((f) => (f ? `<button data-fmt="${f[0]}" title="${f[1]}" tabindex="-1">${f[2]}</button>` : '<span class="sep"></span>')).join('');
+
 function renderFormatBar() {
-  $('#fmt-bar').innerHTML = FORMATS.map((f) => (f ? `<button data-fmt="${f[0]}" title="${f[1]}" tabindex="-1">${f[2]}</button>` : '<span class="sep"></span>')).join('')
+  $('#fmt-bar').innerHTML = formatButtons()
     + `<span class="grow"></span>
       <button data-act="emoji" title="Emoji (type : for suggestions)" tabindex="-1">${icon('smile')}</button>
       <button data-act="attach" title="Attach files (or paste / drop an image)" tabindex="-1">${icon('clip')}</button>
@@ -1411,14 +1425,18 @@ function topEmoji(n, base = QUICK_REACTIONS) {
 }
 
 function showFullEmojiPicker(anchor, first, onPick) {
-  const tabs = [['Frequently used', topEmoji(Infinity, first)], ...EMOJI_GROUPS.map(([name, list]) => [name, list.split(' ')])];
+  // The open workspace's own emoji get a last tab, when it has any.
+  const custom = S.customEmoji[S.open?.a] || {};
+  const customNames = Object.keys(custom).sort();
+  const tabs = [['Frequently used', topEmoji(Infinity, first)], ...EMOJI_GROUPS.map(([name, list]) => [name, list.split(' ')]),
+    ...(customNames.length ? [['Workspace emoji', customNames]] : [])];
   let tab = 0;
-  const buttons = (names) => names.filter((n) => EMOJI[n])
-    .map((n) => `<button data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n]}</button>`).join('');
+  const buttons = (names) => names.filter((n) => EMOJI[n] || custom[n])
+    .map((n) => `<button data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n] || `<img class="cemoji" src="${esc(custom[n])}" alt="" loading="lazy">`}</button>`).join('');
   showPopover(anchor, `<div class="emoji-picker">
       <input type="text" class="emoji-search" placeholder="Search emoji" spellcheck="false">
       <div class="emoji-tabs">${tabs.map(([name, list], i) =>
-        `<button data-tab="${i}" class="${i ? '' : 'on'}" title="${esc(name)}">${icon(EMOJI_TAB_ICONS[i] || 'grid')}</button>`).join('')}</div>
+        `<button data-tab="${i}" class="${i ? '' : 'on'}" title="${esc(name)}">${icon(EMOJI_TAB_ICONS[i] || 'star')}</button>`).join('')}</div>
       <div class="emoji-grid wide"></div></div>`, (pop) => {
     const grid = pop.querySelector('.emoji-grid');
     const search = pop.querySelector('.emoji-search');
@@ -1430,6 +1448,7 @@ function showFullEmojiPicker(anchor, first, onPick) {
       const hits = Object.keys(EMOJI).filter((n) => n.includes(q))
         .sort((x, y) => Number(!x.startsWith(q)) - Number(!y.startsWith(q)) || x.length - y.length)
         .filter((n) => !seen.has(EMOJI[n]) && seen.add(EMOJI[n]));
+      hits.unshift(...customNames.filter((n) => n.includes(q)).slice(0, 60));
       grid.innerHTML = buttons(hits.slice(0, 200)) || '<p class="muted">No emoji found</p>';
     };
     draw();
@@ -1546,6 +1565,80 @@ function togglePreview() {
 
 /** `back` is the panel to return to (search results). */
 /**
+ * The conversation above or below in the sidebar (`step` -1 or 1); with `unreadOnly`, the
+ * nearest one with news, wrapping around.
+ */
+function moveConversation(step, unreadOnly) {
+  const rows = [...document.querySelectorAll('#channel-list .row[data-a][data-c]')];
+  if (!rows.length) return;
+  const at = rows.findIndex((r) => r.classList.contains('active'));
+  for (let i = 1; i <= rows.length; i++) {
+    const j = at < 0 ? (step > 0 ? i - 1 : rows.length - i) : at + step * i;
+    if (!unreadOnly && (j < 0 || j >= rows.length)) return;
+    const r = rows[((j % rows.length) + rows.length) % rows.length];
+    if (unreadOnly && !r.classList.contains('unread')) continue;
+    openChannel(r.dataset.a, r.dataset.c);
+    r.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+}
+
+/**
+ * What changed since version `since` (every listed version when null), as a short card:
+ * one line per change, newest version first.
+ */
+export function showWhatsNew(since = null) {
+  const list = CHANGES.filter((c) => !since || compareVersions(c.version, since) > 0);
+  if (!list.length) return;
+  document.querySelector('.whats-new')?.remove();
+  const box = document.createElement('div');
+  box.className = 'whats-new';
+  box.innerHTML = `<div class="wn-card" role="dialog" aria-label="What's new">
+      <div class="wn-head"><div><div class="wn-kicker">What's new</div><h2>Agora ${esc(list[0].version)}</h2></div>
+        <button class="icon-btn" data-wn="close" title="Close (Esc)">${icon('close')}</button></div>
+      <div class="wn-body">${list.map((c, i) => `${i ? `<div class="wn-version">In ${esc(c.version)}</div>` : ''}
+        <ul>${c.items.map(([t, d]) => `<li><b>${esc(t)}</b><span>${esc(d)}</span></li>`).join('')}</ul>`).join('')}</div>
+      <div class="wn-foot"><button class="btn primary" data-wn="close">Got it</button></div></div>`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  box.addEventListener('click', (e) => { if (e.target === box || e.target.closest('[data-wn="close"]')) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(box);
+  box.querySelector('.wn-foot .btn').focus();
+}
+
+/** Copy link, mark unread, copy text: what a message offers beyond the bar. */
+function showMessageMenu(anchor, m) {
+  showPopover(anchor, `<div class="menu">
+      <button data-m="link">${icon('link')}Copy link</button>
+      <button data-m="unread">${icon('bell')}Mark unread from here</button>
+      <button data-m="text">${icon('copy')}Copy text</button></div>`, (pop) => {
+    pop.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-m]');
+      if (!b) return;
+      closePopover();
+      const ids = { account_id: m.account_id, channel_id: m.channel_id, message_id: m.id };
+      try {
+        if (b.dataset.m === 'link') { await navigator.clipboard.writeText(await invoke('message_link', ids)); toast('Link copied'); }
+        if (b.dataset.m === 'unread') { await invoke('mark_unread', ids); toast('Marked unread: it stays unread until you leave this conversation'); }
+        if (b.dataset.m === 'text') { await navigator.clipboard.writeText(m.text); toast('Text copied'); }
+      } catch (x) { toast(String(x)); }
+    });
+  });
+}
+
+/** The workspace's own emoji, once per session; messages are drawn again with them. */
+async function loadCustomEmoji(a) {
+  S.customEmoji[a] = {};
+  try {
+    S.customEmoji[a] = await invoke('custom_emoji', { account_id: a });
+  } catch { return; }
+  if (!Object.keys(S.customEmoji[a]).length) return;
+  for (const m of [...S.messages, ...(S.panel?.messages || [])]) if (m.account_id === a) delete m._html;
+  schedule('messages', 'panel');
+}
+
+/**
  * Opens a conversation at one message: a thread reply opens its thread with the reply
  * highlighted, other messages are scrolled to (popups, Home).
  */
@@ -1593,7 +1686,15 @@ function renderPanel(rebuild = false) {
       el.dataset.view = view;
       el.innerHTML = `<div class="panel-head">${p.back ? `<button class="icon-btn" data-act="panel-back" title="Back to search results">${icon('back')}</button>` : ''}<span>Thread</span><button class="icon-btn" data-act="close-panel" title="Close">${icon('close')}</button></div>
         <div class="panel-body" id="thread-body"></div>
-        <div class="composer"><div class="compose-row"><textarea id="thread-input" rows="1" placeholder="Reply..."></textarea></div></div>`;
+        <div class="composer thread-composer"><div class="compose-row"><textarea id="thread-input" rows="1" placeholder="Reply..."></textarea></div>
+          <div class="fmt-bar thread-fmt">${formatButtons()}<span class="grow"></span>
+            ${['slack', 'rocketchat'].includes(account(p.a)?.kind) ? `<label class="also-send" title="The reply also appears in the conversation"><input type="checkbox" id="thread-broadcast">
+              Also send to ${esc(S.channels.get(key(p.a, p.c))?.display_name || 'the conversation')}</label>` : ''}
+            <button data-act="t-emoji" title="Emoji" tabindex="-1">${icon('smile')}</button>
+            <button data-act="t-attach" title="Attach files (or paste them)" tabindex="-1">${icon('clip')}</button></div></div>`;
+      const ti = $('#thread-input');
+      ti.value = S.drafts[threadDraftKey(p)] || '';
+      autosize(ti);
     }
     const [root, ...replies] = p.messages;
     const body = $('#thread-body');
@@ -1818,7 +1919,7 @@ function personHtml(p) {
         <div class="muted">@${esc(p.name)}</div>
         ${p.presence !== 'unknown' ? `<div class="muted">${presenceLabel(p.presence)}</div>` : ''}</div></div>
     ${p.is_self ? '' : `<div class="person-actions">
-      ${dm ? `<button class="btn" data-act="person-dm" data-c="${esc(dm.id)}">${icon('reply')}Message</button>` : ''}
+      <button class="btn" data-act="person-dm" data-c="${esc(dm?.id || '')}">${icon('reply')}Message</button>
       <button class="btn" data-act="person-mention">@ Mention</button></div>`}
     ${facts || '<p class="muted">The service shares nothing more about this person.</p>'}`;
 }
@@ -2211,19 +2312,44 @@ function showSectionMenu(anchor, sectionId) {
   });
 }
 
+const threadDraftKey = (p) => `${key(p.a, p.c)}\u0001t:${p.root}`;
+
+/** Keeps what is typed under a thread as that thread's draft. */
+function saveThreadDraft() {
+  const p = S.panel;
+  const input = $('#thread-input');
+  if (p?.type !== 'thread' || !input) return;
+  const k = threadDraftKey(p);
+  if (input.value.trim()) S.drafts[k] = input.value; else delete S.drafts[k];
+  save('drafts', S.drafts);
+}
+
 async function sendThreadReply() {
   const input = $('#thread-input');
   const p = S.panel;
   const text = input?.value.trim();
   if (!text || p?.type !== 'thread') return;
+  const also = $('#thread-broadcast');
+  const broadcast = !!also?.checked;
   input.value = '';
   autosize(input);
+  saveThreadDraft();
+  if (also) also.checked = false;
   try {
-    await invoke('send_message', { account_id: p.a, channel_id: p.c, text, thread_root: p.root });
+    await invoke('send_message', { account_id: p.a, channel_id: p.c, text, thread_root: p.root, broadcast });
   } catch (e) {
     toast(String(e));
     input.value = text;
+    saveThreadDraft();
   }
+}
+
+/** Files for a thread go straight up, as replies in it. */
+function sendThreadFiles(files) {
+  const p = S.panel;
+  if (p?.type !== 'thread' || !files.length) return;
+  toast(`Sending ${files.length === 1 ? files[0].name : `${files.length} files`}...`);
+  uploadFiles(p.a, p.c, files.map((f) => ({ blob: f, name: f.name || 'pasted.png' })), p.root);
 }
 
 // ------------------------------------------------------------ popovers
@@ -2573,6 +2699,7 @@ function onMessageAreaClick(e, inPanel) {
       row.classList.toggle('code-open', S.openCode.has(m.id));
       break;
     case 'thread': openThread(m.thread_root || m.id); break;
+    case 'msg-more': showMessageMenu(btn, m); break;
     case 'edit': startEdit(m); break;
     case 'delete':
       if (btn.dataset.armed) {
@@ -2807,7 +2934,17 @@ function bindUi() {
     if (member && S.panel?.type === 'members') { openPerson(S.panel.a, member.dataset.u, S.panel); return; }
     if (e.target.closest('[data-act="members-more"]') && S.panel?.type === 'members') { loadMembers(S.panel); return; }
     const dm = e.target.closest('[data-act="person-dm"]');
-    if (dm && S.panel?.type === 'person') { openChannel(S.panel.a, dm.dataset.c); return; }
+    if (dm && S.panel?.type === 'person') {
+      const { a, u } = S.panel;
+      if (dm.dataset.c) { openChannel(a, dm.dataset.c); return; }
+      // No conversation yet: the service makes one.
+      invoke('open_dm', { account_id: a, user_id: u }).then(async (c) => {
+        // The new conversation reaches the sidebar as an event: wait for it (at most 3 s).
+        for (let i = 0; i < 30 && !S.channels.has(key(a, c)); i++) await new Promise((r) => setTimeout(r, 100));
+        openChannel(a, c);
+      }).catch((x) => toast(String(x)));
+      return;
+    }
     if (e.target.closest('[data-act="person-mention"]') && S.panel?.profile) { mentionPerson(S.panel.profile); return; }
     // Account panel
     const presence = e.target.closest('[data-presence]');
@@ -2866,10 +3003,36 @@ function bindUi() {
     if (autocompleteKey(e) || formatShortcut(e, e.target)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendThreadReply(); }
   });
+  let threadDraftTimer = 0;
   panel.addEventListener('input', (e) => {
     if (e.target.id !== 'thread-input') return;
     autosize(e.target);
     updateAutocomplete(e.target, S.panel?.a);
+    clearTimeout(threadDraftTimer);
+    threadDraftTimer = setTimeout(saveThreadDraft, 400);
+  });
+  panel.addEventListener('paste', (e) => {
+    if (e.target.id !== 'thread-input') return;
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length || e.clipboardData.getData('text/plain')) return;
+    e.preventDefault();
+    sendThreadFiles(files);
+  });
+  // The thread's tools: keep the selection in the box while clicking them.
+  panel.addEventListener('mousedown', (e) => { if (e.target.closest('.thread-fmt button')) e.preventDefault(); });
+  panel.addEventListener('click', (e) => {
+    const b = e.target.closest('.thread-fmt button');
+    const ti = $('#thread-input');
+    if (!b || !ti) return;
+    if (b.dataset.fmt) applyFormat(ti, b.dataset.fmt);
+    else if (b.dataset.act === 't-emoji') showEmojiPicker(b, ti);
+    else if (b.dataset.act === 't-attach') {
+      const pick = document.createElement('input');
+      pick.type = 'file';
+      pick.multiple = true;
+      pick.addEventListener('change', () => sendThreadFiles([...pick.files]));
+      pick.click();
+    }
   });
 
   const input = $('#input');
@@ -2959,6 +3122,11 @@ function bindUi() {
   document.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); });
 
   document.addEventListener('keydown', (e) => {
+    if (e.altKey && !e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      moveConversation(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey);
+      return;
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[0-9]$/.test(e.key)) {
       e.preventDefault();
       const n = Number(e.key);

@@ -544,10 +544,13 @@ impl Service for RocketChatService {
         Ok(msgs)
     }
 
-    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>) -> SResult<Message> {
+    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, broadcast: bool) -> SResult<Message> {
         let mut message = json!({ "rid": channel_id, "msg": convert::to_rc(text) });
         if let Some(root) = thread_root {
             message["tmid"] = json!(root);
+            if broadcast {
+                message["tshow"] = json!(true);
+            }
         }
         let v = self.post("chat.sendMessage", json!({ "message": message })).await?;
         self.convert(std::slice::from_ref(&v["message"]))
@@ -572,6 +575,40 @@ impl Service for RocketChatService {
     async fn mark_read(&self, channel_id: &str, _latest: Option<&Message>) -> SResult<()> {
         // Threads too: their replies are on screen with the conversation (as thread notes).
         self.post("subscriptions.read", json!({ "rid": channel_id, "readThreads": true })).await.map(drop)
+    }
+
+    async fn permalink(&self, channel: &Channel, message_id: &str) -> SResult<String> {
+        let place = match channel.kind {
+            ChannelKind::Public => format!("channel/{}", channel.name),
+            ChannelKind::Private => format!("group/{}", channel.name),
+            ChannelKind::Dm | ChannelKind::Group => format!("direct/{}", channel.id),
+        };
+        Ok(format!("{}/{place}?msg={message_id}", self.server))
+    }
+
+    async fn open_dm(&self, user: &User) -> SResult<Channel> {
+        let v = self.post("im.create", json!({ "username": user.name })).await?;
+        let rid = s(&v["room"]["_id"]);
+        self.fetch_channel(&rid).await.map(|(c, _)| c)
+    }
+
+    async fn mark_unread(&self, _channel_id: &str, message: &Message) -> SResult<()> {
+        self.post("subscriptions.unread", json!({ "firstUnreadMessage": { "_id": message.id } })).await.map(drop)
+    }
+
+    async fn custom_emoji(&self) -> SResult<Vec<(String, String)>> {
+        let v = self.get("emoji-custom.list").await?;
+        let list = v["emojis"]["update"].as_array().cloned().unwrap_or_default();
+        let mut out = Vec::new();
+        for e in &list {
+            let (name, ext) = (s(&e["name"]), s(&e["extension"]));
+            let url = media_url(&self.account_id, &format!("/emoji-custom/{name}.{ext}"));
+            for alias in e["aliases"].as_array().into_iter().flatten().filter_map(|a| a.as_str()) {
+                out.push((alias.to_string(), url.clone()));
+            }
+            out.push((name, url));
+        }
+        Ok(out)
     }
 
     /// `rooms.media` + `rooms.mediaConfirm` (6.8+), falling back to the older `rooms.upload`.
@@ -751,7 +788,7 @@ impl Service for RocketChatService {
 
     async fn fetch(&self, path: &str) -> SResult<Media> {
         // Only what the UI shows: uploaded files, thumbnails and avatars.
-        let allowed = path.starts_with("/file-upload/") || path.starts_with("/avatar/");
+        let allowed = path.starts_with("/file-upload/") || path.starts_with("/avatar/") || path.starts_with("/emoji-custom/");
         if !allowed || path.contains("..") {
             return Err(ServiceError::Other("path not allowed".into()));
         }

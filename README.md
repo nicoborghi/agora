@@ -33,6 +33,8 @@ Agora is not a wrapper that stacks web apps in different tabs. It talks to each 
 - **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
 - **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it, and bookmarks collect messages from every workspace on one page.
 - **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
+- **Threads you can follow.** Replies show in the conversation with what they answer; notifications open the reply in its thread; replies can also go to the conversation.
+- **Files and links that just work.** Any attachment opens in your usual app without a web login; copy a link to any message; mark messages unread to come back to them.
 - **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
 
 
@@ -261,11 +263,12 @@ Possible later option: unload the main webview when Agora sits in the tray for a
 
 Done: the common core and archive, the Demo workspace, the Mattermost, Rocket.Chat and Slack connectors, Home,
 cross-service search with dates, notification levels and quiet hours, groups, profiles and members, the image
-editor, themes and accent colours, automated releases, signed self-updates, bookmarks, drafts.
+editor, themes and accent colours, automated releases, signed self-updates, bookmarks, drafts, macOS and
+Ubuntu builds, files opened without a web login, message links, mark as unread, new direct messages, workspace
+emoji, start at login, single instance, an image cache with a size limit, a "What's new" window after updates.
 
-Next: start with Windows, single instance,
-an image cache with a size limit, custom emoji. Mac and Linux builds are possible (Tauri runs there) but not
-planned for the beta.
+Next: smoother redrawing of busy conversations (only what changed), Slack canvases on real workspaces (images
+inside canvases), pinned messages for Mattermost and Rocket.Chat.
 
 To do: a local *Agora profile*, protected by a password, that owns your workspaces and everything you set up
 around them (favourites kept only in Agora, groups, notification levels, colours and logos). Removing a

@@ -552,7 +552,8 @@ impl Service for MattermostService {
         Ok(convert::post_list(&self.account_id, &self.server, &json!({ "posts": v["posts"] }), &self.keys()))
     }
 
-    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>) -> SResult<Message> {
+    // Mattermost has no "also send to channel": replies show in the channel unless threads are collapsed.
+    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, _broadcast: bool) -> SResult<Message> {
         let body = json!({ "channel_id": channel_id, "message": text, "root_id": thread_root.unwrap_or("") });
         let p = self.post_json("/posts", body).await?;
         Ok(convert::post(&self.account_id, &self.server, &p, &self.keys()))
@@ -583,6 +584,34 @@ impl Service for MattermostService {
         self.post_json("/channels/members/me/view", json!({ "channel_id": channel_id, "prev_channel_id": "" }))
             .await
             .map(drop)
+    }
+
+    async fn permalink(&self, _channel: &Channel, message_id: &str) -> SResult<String> {
+        // The server finds the team itself.
+        Ok(format!("{}/_redirect/pl/{message_id}", self.server))
+    }
+
+    async fn open_dm(&self, user: &User) -> SResult<Channel> {
+        let v = self.post_json("/channels/direct", json!([self.self_id(), user.id])).await?;
+        self.fetch_channel(&s(&v["id"])).await
+    }
+
+    async fn mark_unread(&self, _channel_id: &str, message: &Message) -> SResult<()> {
+        let path = format!("/users/{}/posts/{}/set_unread", self.self_id(), message.id);
+        self.post_json(&path, json!({})).await.map(drop)
+    }
+
+    async fn custom_emoji(&self) -> SResult<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        for page in 0..50 {
+            let v = self.get(&format!("/emoji?page={page}&per_page=200")).await?;
+            let list = v.as_array().cloned().unwrap_or_default();
+            out.extend(list.iter().map(|e| (s(&e["name"]), media_url(&self.account_id, &format!("/emoji/{}/image", s(&e["id"]))))));
+            if list.len() < 200 {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// Collapsed threads keep their own read state, per team: the thread's team is tried first
@@ -656,7 +685,8 @@ impl Service for MattermostService {
         // Only what the UI needs: files, previews, avatars and the server's image proxy.
         let allowed = path.starts_with("/files/")
             || (path.starts_with("/users/") && path.ends_with("/image"))
-            || path.starts_with("/image?");
+            || path.starts_with("/image?")
+            || (path.starts_with("/emoji/") && path.ends_with("/image"));
         if !allowed || path.contains("..") {
             return Err(ServiceError::Other("path not allowed".into()));
         }

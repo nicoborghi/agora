@@ -1,7 +1,7 @@
 // Settings screen. Inputs carry `data-path` (a dotted path into S.settings) and
 // are saved automatically; everything else is handled by `data-act`.
 import { invoke, esc, initials, toast, icon, OS, KEYCHAIN } from './api.js';
-import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate } from './app.js';
+import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate, showWhatsNew } from './app.js';
 
 const SECTIONS = [
   ['accounts', 'Accounts', 'people'],
@@ -294,7 +294,7 @@ const VIEWS = {
     ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Updates are signed: only installers signed with Agora\'s key are accepted.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}
     <h3>Build</h3>
     ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
-    ${opt('Version', esc(S.settings.version), '')}
+    ${opt('Version', esc(S.settings.version), '<button class="btn" data-act="whats-new">What\'s new</button>')}
     ${opt('Credits', 'Emoji: Noto Color Emoji by Google, under the SIL Open Font License.', '')}`,
 };
 
@@ -486,6 +486,9 @@ function bind(ov) {
         } catch (err) { toast(String(err)); }
         break;
       }
+      case 'whats-new':
+        showWhatsNew();
+        break;
       case 'check-update':
         checkForUpdate(true).then(render);
         render();

@@ -32,14 +32,25 @@ export const QUICK_REACTIONS = ['+1', 'heart', 'joy', 'eyes', 'tada', 'white_che
  * yellow version of each, so tones are left out and every emoji is drawn in that one font.
  */
 function withTone(name, _tone) {
-  return EMOJI[name] || null;
+  return EMOJI[name] || customEmoji(name);
+}
+
+// Workspace (custom) emoji: the account being drawn, and how to find a picture for a name.
+let drawingFor = null;
+let customLookup = () => null;
+export function setCustomEmoji(lookup) { customLookup = lookup; }
+function customEmoji(name) {
+  const url = drawingFor && customLookup(drawingFor, name);
+  return url ? `<img class="cemoji" src="${esc(url)}" alt=":${esc(name)}:" title=":${esc(name)}:">` : null;
 }
 /** Skin-tone modifiers typed straight into a message. */
 const SKIN_TONES = /[\u{1F3FB}-\u{1F3FF}]/gu;
 
-export const emoji = (name) => {
+/** `account`: whose workspace emoji may be used. */
+export const emoji = (name, account = null) => {
   const [base, tone] = String(name).split('::skin-tone-');
-  return withTone(base, tone) || `:${esc(name)}:`;
+  drawingFor = account;
+  try { return withTone(base, tone) || `:${esc(name)}:`; } finally { drawingFor = null; }
 };
 
 // ------------------------------------------------------------ highlighter
@@ -125,7 +136,13 @@ function inline(src) {
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[+i]);
 }
 
-export function renderMarkdown(src) {
+/** `account`: whose workspace emoji may be used. */
+export function renderMarkdown(src, account = null) {
+  drawingFor = account;
+  try { return renderBlocks(src); } finally { drawingFor = null; }
+}
+
+function renderBlocks(src) {
   const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
   let html = '';
   let para = [];

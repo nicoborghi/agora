@@ -28,6 +28,9 @@ fn main() {
     tracing_subscriber::fmt().with_target(false).init();
 
     tauri::Builder::default()
+        // First, so a second start stops here and only shows the window of the first.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![commands::HIDDEN_ARG])))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .register_asynchronous_uri_scheme_protocol(media::LEGACY_SCHEME, media::handle)
@@ -52,6 +55,13 @@ fn main() {
             let engine = Engine::new(store, frontend, Arc::new(factory::Factory));
             let starter = engine.clone();
             tauri::async_runtime::spawn(async move { starter.start() });
+            commands::apply_autostart(app.handle(), engine.settings().autostart);
+            // Started at login: straight to the tray.
+            if std::env::args().any(|a| a == commands::HIDDEN_ARG) {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
 
             app.manage(AppState { engine, boot: Mutex::new(boot), data_dir, popups, update: Mutex::new(None) });
             Ok(())
@@ -124,6 +134,10 @@ fn main() {
             commands::channel_details,
             commands::get_canvas,
             commands::thread_opened,
+            commands::message_link,
+            commands::open_dm,
+            commands::mark_unread,
+            commands::custom_emoji,
             commands::popup_ready,
             commands::popup_resize,
             commands::popup_closed,

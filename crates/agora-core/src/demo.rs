@@ -185,7 +185,7 @@ impl Service for DemoService {
         Ok(vec![])
     }
 
-    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>) -> SResult<Message> {
+    async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, _broadcast: bool) -> SResult<Message> {
         let mut m = message(&self.account_id, channel_id, format!("s{}", self.next()), SELF_ID, now_ms(), text);
         m.thread_root = thread_root.map(str::to_string);
         // In DMs the other person answers, so popups and the tray can be tried out.

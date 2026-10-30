@@ -101,8 +101,29 @@ pub async fn send_message(
     channel_id: String,
     text: String,
     thread_root: Option<String>,
+    broadcast: Option<bool>,
 ) -> CmdResult<MessageView> {
-    state.engine.send(&account_id, &channel_id, &text, thread_root.as_deref()).await
+    state.engine.send(&account_id, &channel_id, &text, thread_root.as_deref(), broadcast.unwrap_or(false)).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn message_link(state: State<'_, AppState>, account_id: String, channel_id: String, message_id: String) -> CmdResult<String> {
+    state.engine.permalink(&account_id, &channel_id, &message_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn open_dm(state: State<'_, AppState>, account_id: String, user_id: String) -> CmdResult<String> {
+    state.engine.open_dm(&account_id, &user_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn mark_unread(state: State<'_, AppState>, account_id: String, channel_id: String, message_id: String) -> CmdResult<()> {
+    state.engine.mark_unread(&account_id, &channel_id, &message_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn custom_emoji(state: State<'_, AppState>, account_id: String) -> CmdResult<std::collections::HashMap<String, String>> {
+    Ok((*state.engine.custom_emoji(&account_id).await?).clone())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -303,7 +324,8 @@ pub async fn set_channel_prefs(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn save_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+pub async fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+    apply_autostart(&app, settings.autostart);
     state.engine.save_settings(settings)
 }
 
@@ -712,6 +734,24 @@ pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: Str
         }
     }
     Ok(())
+}
+
+/// Argument the login item starts Agora with: straight to the tray, no window.
+pub const HIDDEN_ARG: &str = "--hidden";
+
+/// Keeps the system's login item in step with the "Start at login" setting.
+pub fn apply_autostart(app: &AppHandle, wanted: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let on = launcher.is_enabled().unwrap_or(false);
+    let result = match (wanted, on) {
+        (true, false) => launcher.enable(),
+        (false, true) => launcher.disable(),
+        _ => Ok(()),
+    };
+    if let Err(e) = result {
+        tracing::warn!("start at login: {e}");
+    }
 }
 
 /// Hands a link or a file to the system, which opens it with the default app.
