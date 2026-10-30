@@ -13,6 +13,29 @@ async function pdfjs() {
   return lib;
 }
 
+/**
+ * The first page of a PDF as a small JPEG (data URL), for its card in the conversation.
+ * `width`: in CSS pixels.
+ */
+export async function firstPage(a, path, width) {
+  const bytes = await invoke('read_file', { account_id: a, path });
+  const { getDocument } = await pdfjs();
+  const task = getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: true });
+  const doc = await task.promise;
+  try {
+    const page = await doc.getPage(1);
+    const vp = page.getViewport({ scale: 1 });
+    const view = page.getViewport({ scale: (width / vp.width) * devicePixelRatio });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(view.width);
+    canvas.height = Math.ceil(view.height);
+    await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport: view }).promise;
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally {
+    task.destroy().catch(() => {});
+  }
+}
+
 const GAP = 12; // between pages, at zoom 1
 const MAP_W = 150; // map width in pixels
 
@@ -40,13 +63,17 @@ export async function openPdf(a, path, name) {
   const pageLabel = v.querySelector('.pdf-page');
 
   let doc = null;
+  let task = null;
   let closed = false;
   const close = () => {
     closed = true;
-    observer?.disconnect();
-    mapObserver?.disconnect();
-    doc?.destroy();
+    // The viewer goes first: nothing below may keep it on screen.
     Element.prototype.remove.call(v);
+    try {
+      observer?.disconnect();
+      mapObserver?.disconnect();
+      task?.destroy().catch(() => {});
+    } catch { /* already freed */ }
   };
   v.remove = close; // Esc and other closers call remove()
   v.addEventListener('click', (e) => {
@@ -62,7 +89,8 @@ export async function openPdf(a, path, name) {
     const bytes = await invoke('read_file', { account_id: a, path });
     if (closed) return;
     const { getDocument } = await pdfjs();
-    doc = await getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: true }).promise;
+    task = getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: true });
+    doc = await task.promise;
   } catch (e) {
     if (!closed) v.querySelector('.pdf-loading').textContent = `Could not open ${name}: ${e}`;
     return;

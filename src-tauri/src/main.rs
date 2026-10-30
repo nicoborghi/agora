@@ -27,9 +27,13 @@ pub struct AppState {
 fn main() {
     tracing_subscriber::fmt().with_target(false).init();
 
-    tauri::Builder::default()
-        // First, so a second start stops here and only shows the window of the first.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
+    let builder = tauri::Builder::default();
+    // First, so a second start stops here and only shows the window of the first. Installed
+    // builds only: a development build must start even with a hidden copy in the tray (an
+    // earlier `npm run dev` or the installed Agora), or it would show that copy and quit.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)));
+    builder
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![commands::HIDDEN_ARG])))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)

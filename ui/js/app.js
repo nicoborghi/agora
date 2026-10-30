@@ -974,7 +974,7 @@ function attachmentsHtml(m) {
   return `<div class="attachments">${m.attachments.map((f) => ((f.mime || '').startsWith('image/')
     ? `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`
     : `<button class="file-card" data-file="${esc(filePath(f, m.account_id))}" data-mime="${esc(f.mime || '')}" data-name="${esc(f.name)}" data-href="${esc(f.url)}" title="Open ${esc(f.name)}">
-        ${f.thumb_url ? `<img class="file-thumb" src="${esc(f.thumb_url)}" alt="" loading="lazy">` : ''}
+        ${f.thumb_url ? `<img class="file-thumb" src="${esc(f.thumb_url)}" alt="" loading="lazy">` : pdfThumbHtml(f, m.account_id)}
         <span class="file-line"><span class="file-kind">${esc(fileKind(f.name))}</span><span class="file-name">${esc(f.name)}</span>
         <span class="file-size">${esc(fmtSize(f.size))}</span></span></button>`)).join('')}</div>`;
 }
@@ -999,6 +999,49 @@ const viewsPdf = (name, mime) => (mime === 'application/pdf' || /\.pdf$/i.test(n
 /** A PDF over the app, drawn by Agora (ui/js/pdfview.js, loaded on first use). */
 async function openPdfViewer(a, path, name) {
   (await import('./pdfview.js')).openPdf(a, path, name);
+}
+
+// PDFs without a preview from the service: the first page, drawn when the card is on screen,
+// kept as a small picture (the list is redrawn often). Large files are left alone.
+const PDF_THUMB_MAX = 15e6;
+const pdfThumbs = new Map(); // "account path" -> data URL, the most recent last
+function pdfThumbHtml(f, a) {
+  const path = filePath(f, a);
+  if (!path || !viewsPdf(f.name, f.mime) || (f.size && f.size > PDF_THUMB_MAX)) return '';
+  const known = pdfThumbs.get(`${a} ${path}`);
+  return known ? `<img class="file-thumb" src="${known}" alt="">`
+    : `<div class="file-thumb pdf-pending" data-a="${esc(a)}" data-path="${esc(path)}"></div>`;
+}
+let thumbWatch = null;
+/** Starts drawing the previews of PDF cards that are (nearly) on screen. */
+function watchPdfThumbs(root) {
+  thumbWatch ??= new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      thumbWatch.unobserve(e.target);
+      drawPdfThumb(e.target.dataset.a, e.target.dataset.path);
+    }
+  }, { rootMargin: '300px' });
+  root.querySelectorAll('.pdf-pending:not([data-watched])').forEach((el) => { el.dataset.watched = '1'; thumbWatch.observe(el); });
+}
+const thumbsDrawing = new Set();
+async function drawPdfThumb(a, path) {
+  const k = `${a} ${path}`;
+  if (pdfThumbs.has(k) || thumbsDrawing.has(k)) return;
+  thumbsDrawing.add(k);
+  try {
+    const url = await (await import('./pdfview.js')).firstPage(a, path, 300);
+    pdfThumbs.set(k, url);
+    if (pdfThumbs.size > 60) pdfThumbs.delete(pdfThumbs.keys().next().value);
+    for (const el of document.querySelectorAll('.pdf-pending')) {
+      if (el.dataset.a === a && el.dataset.path === path) el.outerHTML = `<img class="file-thumb" src="${url}" alt="">`;
+    }
+  } catch {
+    // No preview: the card still opens the file.
+    for (const el of document.querySelectorAll('.pdf-pending')) if (el.dataset.path === path) el.remove();
+  } finally {
+    thumbsDrawing.delete(k);
+  }
 }
 
 /** Downloads a file signed in and opens it; without a download path, the browser link. */
@@ -1165,6 +1208,7 @@ function renderMessages(mode = false) {
   }
   if (mode === true) S.stick = true;
   if (S.stick) box.scrollTop = box.scrollHeight;
+  watchPdfThumbs(box);
 }
 
 /** Keeps the view at the bottom while late content (pictures, previews) grows the list. */
@@ -1726,6 +1770,7 @@ function renderPanel(rebuild = false) {
       + (replies.length ? `<div class="thread-sep">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}</div>` : '')
       + messagesHtml(replies, true);
     if (atBottom || rebuild) body.scrollTop = body.scrollHeight;
+    watchPdfThumbs(body);
   } else if (p.type === 'search') {
     renderSearch(el, rebuild);
   } else if (p.type === 'account' || p.type === 'notify') {
