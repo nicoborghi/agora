@@ -5,6 +5,8 @@ const T = window.__TAURI__;
 const UA = navigator.userAgent;
 export const OS = /Mac/.test(UA) ? 'mac' : /Linux|X11/.test(UA) ? 'linux' : 'windows';
 /** Where sign-ins and the archive key are kept, as each system calls it. */
+/** Where the app serves files that need the account's sign-in (see model.rs `media_url`). */
+export const MEDIA_ORIGIN = OS === 'windows' ? 'http://agora.localhost' : 'agora://localhost';
 export const KEYCHAIN = { windows: 'Windows Credential Manager', mac: 'the macOS Keychain', linux: 'the system keyring (GNOME Keyring or KWallet)' }[OS];
 
 // `args` may be raw bytes (Uint8Array), sent as the request body; `options.headers` then carries the rest.

@@ -554,6 +554,18 @@ impl SlackService {
         true
     }
 
+    /// `/file/<id>` (a file archived before Agora kept its download path) becomes the file's
+    /// `/files-pri/...` path, asked from Slack; other paths stay as they are.
+    async fn file_path(&self, path: &str) -> SResult<String> {
+        let Some(id) = path.strip_prefix("/file/") else { return Ok(path.to_string()) };
+        let v = self.api("files.info", &[("file", id.to_string())]).await?;
+        let f = &v["file"];
+        convert::non_empty(&f["url_private_download"])
+            .or_else(|| convert::non_empty(&f["url_private"]))
+            .and_then(|u| u.strip_prefix("https://files.slack.com").map(str::to_string))
+            .ok_or_else(|| ServiceError::Other("Slack has no download for this file".into()))
+    }
+
     async fn fetch_url(&self, url: &str, auth: bool) -> SResult<Media> {
         let mut rb = self.http.get(url);
         if auth {
@@ -1045,6 +1057,7 @@ impl Service for SlackService {
     }
 
     async fn fetch(&self, path: &str) -> SResult<Media> {
+        let path = &self.file_path(path).await?;
         let allowed = path.starts_with("/files-pri/") || path.starts_with("/files-tmb/");
         if !allowed || path.contains("..") {
             return Err(ServiceError::Other("path not allowed".into()));
@@ -1053,6 +1066,7 @@ impl Service for SlackService {
     }
 
     async fn download(&self, path: &str, dest: &mut Download) -> SResult<()> {
+        let path = &self.file_path(path).await?;
         if !path.starts_with("/files-pri/") || path.contains("..") {
             return Err(ServiceError::Other("path not allowed".into()));
         }

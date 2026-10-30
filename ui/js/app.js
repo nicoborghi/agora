@@ -1,7 +1,7 @@
 // Main window. Plain DOM, no framework: the only state is `S`, and every
 // render function rebuilds one region from it. Only the open conversation's
 // messages live in memory (capped), everything else stays in the Rust archive.
-import { invoke, listen, esc, initials, toast, icon, OS } from './api.js';
+import { invoke, listen, esc, initials, toast, icon, OS, MEDIA_ORIGIN } from './api.js';
 import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrls, setCustomEmoji } from './markdown.js';
 import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
@@ -973,15 +973,50 @@ function attachmentsHtml(m) {
   if (!m.attachments?.length) return '';
   return `<div class="attachments">${m.attachments.map((f) => ((f.mime || '').startsWith('image/')
     ? `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`
-    : `<button class="file-card" data-file="${esc(f.path || '')}" data-name="${esc(f.name)}" data-href="${esc(f.url)}" title="Open ${esc(f.name)}">
+    : `<button class="file-card" data-file="${esc(filePath(f, m.account_id))}" data-mime="${esc(f.mime || '')}" data-name="${esc(f.name)}" data-href="${esc(f.url)}" title="Open ${esc(f.name)}">
         ${f.thumb_url ? `<img class="file-thumb" src="${esc(f.thumb_url)}" alt="" loading="lazy">` : ''}
         <span class="file-line"><span class="file-kind">${esc(fileKind(f.name))}</span><span class="file-name">${esc(f.name)}</span>
         <span class="file-size">${esc(fmtSize(f.size))}</span></span></button>`)).join('')}</div>`;
 }
 
+/**
+ * The service path to download a file through Agora. Messages archived before 0.3.0 have none:
+ * it comes from the saved link (Mattermost, Rocket.Chat) or the file id (Slack).
+ */
+function filePath(f, a) {
+  if (f.path) return f.path;
+  const mm = /\/api\/v4\/files\/([\w]+)/.exec(f.url || '');
+  if (mm) return `/files/${mm[1]}`;
+  const rc = /(\/file-upload\/[^?#]+)/.exec(f.url || '');
+  if (rc) return decodeURI(rc[1]);
+  if (account(a)?.kind === 'slack' && /^F\w+$/.test(f.id || '')) return `/file/${f.id}`;
+  return '';
+}
+
+/** PDFs open inside Agora (Linux webviews have no PDF reader: the system's app there). */
+const viewsPdf = (name, mime) => OS !== 'linux' && (mime === 'application/pdf' || /\.pdf$/i.test(name || ''));
+
+/** A PDF over the app, read by the webview's own PDF reader, with "Open in app" and close. */
+function openPdfViewer(a, path, name) {
+  document.querySelector('.viewer')?.remove();
+  const v = document.createElement('div');
+  v.className = 'viewer pdf-viewer';
+  v.innerHTML = `<div class="pdf-bar"><span class="pdf-name">${icon('page')}${esc(name)}</span>
+      <button class="btn" data-pdf="app">${icon('external')}Open in app</button>
+      <button class="icon-btn" data-pdf="close" title="Close (Esc)">${icon('close')}</button></div>
+    <iframe src="${esc(`${MEDIA_ORIGIN}/${a}${path}`)}" title="${esc(name)}"></iframe>`;
+  v.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pdf]');
+    if (b?.dataset.pdf === 'close' || e.target === v) v.remove();
+    if (b?.dataset.pdf === 'app') invoke('open_attachment', { account_id: a, path, name }).catch((x) => toast(String(x)));
+  });
+  document.body.appendChild(v);
+}
+
 /** Downloads a file signed in and opens it; without a download path, the browser link. */
 async function openFile(a, el) {
   const { file, name, href } = el.dataset;
+  if (file && viewsPdf(name, el.dataset.mime)) { openPdfViewer(a, file, name); return; }
   if (!file) { invoke('open_url', { url: href }).catch((x) => toast(String(x))); return; }
   if (el.classList.contains('busy')) return;
   el.classList.add('busy');
@@ -3147,7 +3182,7 @@ function bindUi() {
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); togglePreview(); return; }
     const open = document.querySelector('.viewer');
     const zoomKey = { '+': 'in', '=': 'in', '-': 'out', 0: 'fit' }[e.key];
-    if (open && zoomKey && !e.ctrlKey) { e.preventDefault(); open.zoom(zoomKey); return; }
+    if (open?.zoom && zoomKey && !e.ctrlKey) { e.preventDefault(); open.zoom(zoomKey); return; }
     if (e.key === 'Escape') {
       const viewer = document.querySelector('.viewer');
       if (viewer) { viewer.remove(); return; }

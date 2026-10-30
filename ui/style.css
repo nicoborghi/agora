@@ -277,6 +277,13 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
 .viewer img { max-width: 96vw; max-height: 96vh; cursor: zoom-in; transform-origin: center; will-change: transform; touch-action: none; }
 .viewer.zoomed img { cursor: grab; }
 .viewer.zoomed img:active { cursor: grabbing; }
+/* A PDF: the bar on top, the webview's PDF reader below. */
+.viewer.pdf-viewer { display: flex; flex-direction: column; place-items: stretch; padding: 24px 5vw; cursor: default; }
+.pdf-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg); border-radius: 10px 10px 0 0; color: var(--fg); }
+.pdf-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-bar .btn { display: flex; align-items: center; gap: 6px; }
+.pdf-bar .i { width: 14px; height: 14px; flex: none; }
+.pdf-viewer iframe { flex: 1; width: 100%; border: 0; border-radius: 0 0 10px 10px; background: #fff; }
 .viewer-bar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
   padding: 4px; border-radius: 8px; background: rgba(20, 20, 24, .8); color: #eee; font-size: 12px; cursor: default; }
 .viewer-bar button { min-width: 28px; height: 26px; padding: 0 8px; border-radius: 6px; color: inherit; font-size: 14px; display: grid; place-items: center; }

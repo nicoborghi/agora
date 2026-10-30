@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http://agora.localhost http://armos.localhost agora: armos:; connect-src ipc: http://ipc.localhost; font-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http://agora.localhost http://armos.localhost agora: armos:; connect-src ipc: http://ipc.localhost; font-src 'self'; frame-src 'self' http://agora.localhost agora:"
     }
   },
   "bundle": {
