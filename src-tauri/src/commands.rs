@@ -784,6 +784,13 @@ fn files_dir(app: &AppHandle) -> CmdResult<std::path::PathBuf> {
     Ok(app.path().app_cache_dir().map_err(err)?.join("files"))
 }
 
+/// A file's bytes for the PDF viewer, through the same cache as pictures.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn read_file(app: AppHandle, account_id: String, path: String) -> CmdResult<tauri::ipc::Response> {
+    let (_, bytes) = crate::media::load(&app, &account_id, &path).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Downloads an attachment signed in (no web login) and opens it with the default app.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_attachment(app: AppHandle, state: State<'_, AppState>, account_id: String, path: String, name: String) -> CmdResult<()> {

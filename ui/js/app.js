@@ -993,26 +993,12 @@ function filePath(f, a) {
   return '';
 }
 
-/** PDFs open inside Agora (Linux webviews have no PDF reader: the system's app there). */
-const viewsPdf = (name, mime) => OS !== 'linux' && (mime === 'application/pdf' || /\.pdf$/i.test(name || ''));
+/** PDFs open inside Agora. */
+const viewsPdf = (name, mime) => (mime === 'application/pdf' || /\.pdf$/i.test(name || ''));
 
-/** A PDF over the app, read by the webview's own PDF reader, with "Open in app" and close. */
-function openPdfViewer(a, path, name) {
-  document.querySelector('.viewer')?.remove();
-  const v = document.createElement('div');
-  v.className = 'viewer pdf-viewer';
-  v.innerHTML = `<div class="pdf-bar"><span class="pdf-name">${icon('page')}${esc(name)}</span>
-      <button class="btn" data-pdf="app">${icon('external')}Open in app</button>
-      <button class="icon-btn" data-pdf="close" title="Close (Esc)">${icon('close')}</button></div>
-    <div class="pdf-loading">Loading ${esc(name)}...<small>The first time, the whole file is downloaded; afterwards it opens from the cache.</small></div>
-    <iframe src="${esc(`${MEDIA_ORIGIN}/${a}${path}`)}" title="${esc(name)}"></iframe>`;
-  v.querySelector('iframe').addEventListener('load', () => v.querySelector('.pdf-loading')?.remove());
-  v.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-pdf]');
-    if (b?.dataset.pdf === 'close' || e.target === v) v.remove();
-    if (b?.dataset.pdf === 'app') invoke('open_attachment', { account_id: a, path, name }).catch((x) => toast(String(x)));
-  });
-  document.body.appendChild(v);
+/** A PDF over the app, drawn by Agora (ui/js/pdfview.js, loaded on first use). */
+async function openPdfViewer(a, path, name) {
+  (await import('./pdfview.js')).openPdf(a, path, name);
 }
 
 /** Downloads a file signed in and opens it; without a download path, the browser link. */

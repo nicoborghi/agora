@@ -5,7 +5,7 @@ export const CHANGES = [
   {
     version: '0.3.0',
     items: [
-      ['Files open in one click', 'PDFs and other files download through Agora, signed in, and open in your usual app. No more web login.'],
+      ['PDFs inside Agora', 'PDFs open in Agora with zoom and a map of the pages on the right; other files open in your usual app. No more web login.'],
       ['Thread replies you can reach', 'Popups and Home open a reply right inside its thread. Unread dots no longer come back after reconnecting.'],
       ['Replies in the main chat', 'Replies sent to the conversation quote the original once, and folded thread lines show the latest reply.'],
       ['New message menu', 'Copy a link to a message, mark it unread, or copy its text from the … button.'],
@@ -17,7 +17,7 @@ export const CHANGES = [
       ['Emoji look', 'Google\'s Noto emoji, the same on every system, in their yellow version.'],
       ['One Agora at a time', 'Starting Agora again brings the open one to the front. "Start at login" now works on every system.'],
       ['Images load once', 'Pictures are kept on disk within the limit in Settings, so they are not downloaded again.'],
-      ['Smaller things', 'Zoom in opened images, shorter link previews, shared Slack messages shown, roomier Settings.'],
+      ['Smaller things', 'Zoom in opened images with a map of where you are, shorter link previews, shared Slack messages shown, roomier Settings.'],
     ],
   },
   {

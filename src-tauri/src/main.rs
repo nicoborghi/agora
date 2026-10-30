@@ -123,6 +123,7 @@ fn main() {
             commands::upload_file,
             commands::open_url,
             commands::open_attachment,
+            commands::read_file,
             commands::set_zoom,
             commands::set_titlebar,
             commands::get_profile,

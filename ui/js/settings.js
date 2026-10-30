@@ -295,7 +295,7 @@ const VIEWS = {
     <h3>Build</h3>
     ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
     ${opt('Version', esc(S.settings.version), '<button class="btn" data-act="whats-new">What\'s new</button>')}
-    ${opt('Credits', 'Emoji: Noto Color Emoji by Google, under the SIL Open Font License.', '')}`,
+    ${opt('Credits', 'Emoji: Noto Color Emoji by Google (SIL Open Font License). PDFs: Mozilla PDF.js (Apache License 2.0).', '')}`,
 };
 
 function render() {

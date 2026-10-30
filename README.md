@@ -283,5 +283,6 @@ you can use, study, share and modify it, and versions you distribute must stay u
 The bundled Lato font is under the [SIL Open Font License](ui/fonts/OFL.txt); emoji are drawn with
 [Noto Color Emoji](https://github.com/googlefonts/noto-emoji), under the same licence
 ([text](ui/fonts/OFL-NotoEmoji.txt)), cut down to the yellow version of each emoji by
-`scripts/make-emoji-font.mjs`; the emoji
+`scripts/make-emoji-font.mjs`; PDFs are drawn with Mozilla [PDF.js](https://mozilla.github.io/pdf.js/)
+(Apache 2.0, [licence](ui/vendor/pdfjs/LICENSE)); the emoji
 shortcode table (`ui/js/emoji-data.js`) is generated from [emoji-datasource](https://github.com/iamcal/emoji-data) (MIT).

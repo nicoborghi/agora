@@ -32,32 +32,32 @@ async fn serve(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
     let Some((account, rest)) = path.trim_start_matches('/').split_once('/') else {
         return status(StatusCode::NOT_FOUND, "not found");
     };
-    let Some(state) = app.try_state::<AppState>() else {
-        return status(StatusCode::SERVICE_UNAVAILABLE, "starting");
-    };
-    let file = cache_dir(app).map(|d| d.join(cache_key(account, rest)));
-    if let Some((mime, bytes)) = file.as_deref().and_then(read_cached) {
-        return ok(mime, bytes);
-    }
-    match state.engine.fetch_media(account, &format!("/{rest}")).await {
-        Ok(media) => {
-            let Some(file) = file else { return ok(media.mime, media.bytes) };
-            // Written to the cache first, then the same bytes answer: no second copy of large files.
-            let limit = state.engine.settings().image_cache_mb.saturating_mul(1_000_000);
-            let mime = media.mime.clone();
-            let bytes = media.bytes;
-            match tauri::async_runtime::spawn_blocking(move || {
-                store(&file, &mime, &bytes, limit);
-                bytes
-            })
-            .await
-            {
-                Ok(bytes) => ok(media.mime, bytes),
-                Err(_) => status(StatusCode::INTERNAL_SERVER_ERROR, "error"),
-            }
-        }
+    match load(app, account, &format!("/{rest}")).await {
+        Ok((mime, bytes)) => ok(mime, bytes),
         Err(e) => status(StatusCode::BAD_GATEWAY, &e),
     }
+}
+
+/// A service file (`path` starts with "/"), from the disk cache or fetched signed in and cached.
+pub async fn load(app: &AppHandle, account: &str, path: &str) -> Result<(String, Vec<u8>), String> {
+    let state = app.try_state::<AppState>().ok_or("starting")?;
+    let file = cache_dir(app).map(|d| d.join(cache_key(account, path.trim_start_matches('/'))));
+    if let Some(found) = file.as_deref().and_then(read_cached) {
+        return Ok(found);
+    }
+    let media = state.engine.fetch_media(account, path).await?;
+    let Some(file) = file else { return Ok((media.mime, media.bytes)) };
+    // Written to the cache first, then the same bytes answer: no second copy of large files.
+    let limit = state.engine.settings().image_cache_mb.saturating_mul(1_000_000);
+    let mime = media.mime.clone();
+    let bytes = media.bytes;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        store(&file, &mime, &bytes, limit);
+        bytes
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok((media.mime, bytes))
 }
 
 fn cache_dir(app: &AppHandle) -> Option<PathBuf> {
