@@ -415,16 +415,19 @@ pub fn message(acc: &str, channel_id: &str, m: &Value, name_of: &dyn Fn(&str) ->
             let private = s(&f["url_private"]);
             let path = |u: &str| u.strip_prefix("https://files.slack.com").map(|p| media_url(acc, p));
             let image = mime.starts_with("image/");
+            let download = non_empty(&f["url_private_download"]).unwrap_or_else(|| private.clone());
             Attachment {
                 id: s(&f["id"]),
                 name: non_empty(&f["name"]).or_else(|| non_empty(&f["title"])).unwrap_or_default(),
                 size: f["size"].as_u64().unwrap_or(0),
+                path: download.strip_prefix("https://files.slack.com").map(str::to_string),
                 url: if image { path(&private).unwrap_or(private.clone()) } else { non_empty(&f["permalink"]).unwrap_or(private) },
-                thumb_url: if image {
-                    non_empty(&f["thumb_720"]).or_else(|| non_empty(&f["thumb_360"])).and_then(|t| path(&t))
-                } else {
-                    None
-                },
+                // PDFs come with a picture of their first page; other files with a thumbnail.
+                thumb_url: non_empty(&f["thumb_pdf"])
+                    .filter(|_| !image)
+                    .or_else(|| non_empty(&f["thumb_720"]))
+                    .or_else(|| non_empty(&f["thumb_360"]))
+                    .and_then(|t| path(&t)),
                 width: f["original_w"].as_u64().map(|w| w as u32),
                 height: f["original_h"].as_u64().map(|h| h as u32),
                 mime,

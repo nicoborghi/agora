@@ -134,7 +134,9 @@ pub fn channel(acc: &str, c: &Value, member: Option<&Value>, self_id: &str, team
             _ => (c["total_msg_count"].as_i64().unwrap_or(0), m["msg_count"].as_i64().unwrap_or(0)),
         };
         unread = (total - seen).max(0) as u32;
-        mentions = m["mention_count"].as_u64().unwrap_or(0) as u32;
+        // Mentions counted the same way as messages: with collapsed threads, the root count only,
+        // so the badge never points at something the conversation does not show as new.
+        mentions = m["mention_count_root"].as_u64().or_else(|| m["mention_count"].as_u64()).unwrap_or(0) as u32;
         last_read = m["last_viewed_at"].as_i64().unwrap_or(0);
     }
     let mut ch = Channel::new(acc, &id, kind, &name);
@@ -279,6 +281,7 @@ pub fn post(acc: &str, server: &str, p: &Value, keys: &MentionKeys) -> Message {
                 format!("{server}/api/v4/files/{id}?download=1")
             };
             Attachment {
+                path: Some(format!("/files/{id}")),
                 url,
                 thumb_url: thumb,
                 name: s(&f["name"]),

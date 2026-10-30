@@ -88,7 +88,7 @@ async function init() {
   setTimeout(() => checkForUpdate(false), 20e3);
   setInterval(() => checkForUpdate(false), 6 * 3600e3);
   await listen('agora-sound', playSound);
-  await listen('agora-open', (p) => openChannel(p.account_id, p.channel_id));
+  await listen('agora-open', (p) => openTarget(p.account_id, p.channel_id, p.message_id, p.thread_root));
   bindUi();
   refreshAll();
   const last = load('last-open');
@@ -657,6 +657,7 @@ async function openChannel(a, c) {
   const switching = !isOpen(a, c);
   if (switching) { saveDraft(); clearPending(); closeAutocomplete(); }
   S.open = { a, c };
+  if (switching) S.openCode.clear();
   S.messages = [];
   S.hasOlder = true;
   S.editing = null;
@@ -718,9 +719,8 @@ RENDER.home = function renderHome() {
   if (!S.open) $('#empty').hidden = show;
   if (!show) return;
   if (S.rail === 'bookmarks') { renderBookmarks(); return; }
-  // Bursts of events (catch-up after connecting) reload the view once.
-  clearTimeout(homeTimer);
-  homeTimer = setTimeout(loadHome, 200);
+  // Bursts of events (catch-up after connecting): at most one reload every 600 ms.
+  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = 0; loadHome(); }, 600);
 };
 
 // ------------------------------------------------------------ updates
@@ -847,9 +847,10 @@ async function loadHome() {
     const [cls, label] = STATUS[S.conn[a.id]?.state] || ['warn', 'Not connected'];
     const mine = items.filter((i) => i.channel.account_id === a.id);
     // Conversations as small threads: name, then the latest lines as speech bubbles.
-    const body = mine.length ? mine.map((i) => `<button class="home-item" data-a="${esc(a.id)}" data-c="${esc(i.channel.id)}">
+    const body = mine.length ? mine.map((i) => `<button class="home-item" data-a="${esc(a.id)}" data-c="${esc(i.channel.id)}"
+        data-id="${esc(i.messages.at(-1)?.id || '')}" data-root="${esc(i.messages.at(-1)?.thread_root || '')}">
         <div class="hi-where">${glyph(i.channel)}<b>${esc(i.channel.display_name)}</b>${i.channel.group ? `<span class="muted">${esc(i.channel.group)}</span>` : ''}${badgeHtml(i.channel)}</div>
-        ${i.messages.slice(-2).map((m) => `<div class="hi-msg">${messageAvatar(m, 'xs')}<div class="bubble"><span class="who">${esc(m.author_name)}</span>
+        ${i.messages.slice(-2).map((m) => `<div class="hi-msg">${messageAvatar(m, 'xs')}<div class="bubble"><span class="who">${esc(m.author_name)}${m.thread_root ? `<span class="in-thread">${icon('reply')}in thread</span>` : ''}</span>
           <span class="txt">${esc(plain(m.text) || (m.attachments?.length ? 'sent a file' : ''))}</span></div><time>${fmtTime(m.ts)}</time></div>`).join('')}
       </button>`).join('')
       : `<div class="all-read">${s.unread ? 'News in muted conversations' : 'Nothing new here'}</div>`;
@@ -949,11 +950,37 @@ function showReactors(anchor, m, name, inPanel) {
   });
 }
 
+const fmtSize = (n) => (!n ? '' : n < 1e3 ? `${n} B` : n < 1e6 ? `${Math.round(n / 1e3)} KB` : `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB`);
+/** "PDF", "DOCX"...: the file's extension, for its card. */
+const fileKind = (name) => (/\.([a-z0-9]{1,5})$/i.exec(name || '')?.[1] || 'file').toUpperCase();
+
+/**
+ * Images open in the viewer; any other file is a card (its preview when the service has one)
+ * that Agora downloads signed in and opens with the system's app.
+ */
 function attachmentsHtml(m) {
   if (!m.attachments?.length) return '';
-  return `<div class="attachments">${m.attachments.map((f) => (f.mime || '').startsWith('image/')
+  return `<div class="attachments">${m.attachments.map((f) => ((f.mime || '').startsWith('image/')
     ? `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`
-    : `<a class="file" href="${esc(f.url)}" data-url="${esc(f.url)}">${esc(f.name)}</a>`).join('')}</div>`;
+    : `<button class="file-card" data-file="${esc(f.path || '')}" data-name="${esc(f.name)}" data-href="${esc(f.url)}" title="Open ${esc(f.name)}">
+        ${f.thumb_url ? `<img class="file-thumb" src="${esc(f.thumb_url)}" alt="" loading="lazy">` : ''}
+        <span class="file-line"><span class="file-kind">${esc(fileKind(f.name))}</span><span class="file-name">${esc(f.name)}</span>
+        <span class="file-size">${esc(fmtSize(f.size))}</span></span></button>`)).join('')}</div>`;
+}
+
+/** Downloads a file signed in and opens it; without a download path, the browser link. */
+async function openFile(a, el) {
+  const { file, name, href } = el.dataset;
+  if (!file) { invoke('open_url', { url: href }).catch((x) => toast(String(x))); return; }
+  if (el.classList.contains('busy')) return;
+  el.classList.add('busy');
+  try {
+    await invoke('open_attachment', { account_id: a, path: file, name });
+  } catch (e) {
+    toast(`${name}: ${e}`);
+  } finally {
+    el.classList.remove('busy');
+  }
 }
 
 function linksHtml(m) {
@@ -994,15 +1021,18 @@ function namedChannelRefs(html, acc) {
   });
 }
 
-function messageHtml(m, grouped, inThread) {
-  let body = m.deleted ? '<span class="deleted">Message deleted</span>' : namedChannelRefs(renderMarkdown(m.text), m.account_id);
+/** `quoted`: the message this reply answers is already shown just above (by the run). */
+function messageHtml(m, grouped, inThread, quoted = false) {
+  // Rendered once per message object: an edit or reaction arrives as a new object.
+  let body = m.deleted ? '<span class="deleted">Message deleted</span>' : (m._html ??= namedChannelRefs(renderMarkdown(m.text), m.account_id));
   let edited = m.edited_at && !m.deleted ? '<span class="edited">(edited)</span>' : '';
   // Keep the label on the last line of text instead of a line of its own.
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
   const replies = !inThread && m.reply_count
     ? `<button class="replies" data-act="thread">${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}</button>` : '';
-  const ctx = !inThread && m.thread_root ? replyContextHtml(m) : '';
-  return `<div class="msg ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''} ${S.openCode.has(m.id) ? 'code-open' : ''}" data-id="${esc(m.id)}">
+  const reply = !inThread && m.thread_root;
+  const ctx = reply && !quoted ? replyContextHtml(m) : '';
+  return `<div class="msg ${reply ? 'reply' : ''} ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''} ${S.openCode.has(m.id) ? 'code-open' : ''}" data-id="${esc(m.id)}">
     ${grouped ? `<span class="gutter-time">${fmtTime(m.ts)}</span>` : messageAvatar(m)}
     <div class="msg-main">
       ${grouped ? '' : `<div class="msg-head"><b class="author"${personAttrs(m)}>${esc(m.author_name)}</b><time title="${esc(new Date(m.ts).toLocaleString())}">${fmtTime(m.ts)}</time></div>`}
@@ -1019,15 +1049,20 @@ function replyContextHtml(m) {
 }
 
 /** Replies that stay in their thread: one line per run of replies to the same message. */
-function threadNoteHtml(run) {
+function threadNoteHtml(run, newSince = null) {
   const last = run[run.length - 1];
+  const me = account(last.account_id)?.self_user_id;
+  const fresh = newSince !== null && run.some((m) => m.ts > newSince && !m.is_self);
+  const mention = run.some((m) => m.mentions?.includes(me));
   const names = [...new Set(run.map((m) => m.author_name))];
   const who = names.length > 2 ? `${esc(names[0])} and ${names.length - 1} others` : names.map(esc).join(' and ');
-  const what = run.length > 1 ? `${run.length} replies` : `replied: <span class="tn-text">${esc(stripPreview(last.text))}</span>`;
+  const what = run.length > 1
+    ? `<b>${who}</b> ${run.length} replies · last: <span class="tn-text">${esc(stripPreview(last.text))}</span>`
+    : `<b>${who}</b>: <span class="tn-text">${esc(stripPreview(last.text))}</span>`;
   const r = last.reply_to;
-  const on = r && !r.deleted ? ` · on <b>${esc(r.author_name)}</b>'s “${esc(r.text)}”` : '';
-  return `<button class="thread-note" data-act="goto-root" data-root="${esc(last.thread_root)}" data-id="${esc(last.id)}" title="Go to the message and its thread">
-    ${icon('reply')}<span class="tn-line"><b>${who}</b> ${what}<span class="tn-on">${on}</span></span><span class="tn-up">↑</span></button>`;
+  const on = r && !r.deleted ? `In <b>${esc(r.author_name)}</b>'s “${esc(r.text.slice(0, 60))}${r.text.length > 60 ? '…' : ''}” · ` : 'In a thread · ';
+  return `<button class="thread-note ${fresh ? 'fresh' : ''} ${mention ? 'mention' : ''}" data-act="goto-root" data-root="${esc(last.thread_root)}" data-id="${esc(last.id)}" title="Go to the message and its thread">
+    ${icon('reply')}<span class="tn-line"><span class="tn-on">${on}</span>${what}</span><time>${fmtTime(last.ts)}</time><span class="tn-up">↑</span></button>`;
 }
 
 /** First line of Markdown as plain text, for one-line previews. */
@@ -1042,7 +1077,7 @@ function messagesHtml(list, inThread, newSince = null) {
   let day = '';
   let dividerShown = false;
   let run = [];
-  const flushRun = () => { if (run.length) { out += threadNoteHtml(run); run = []; prev = null; } };
+  const flushRun = () => { if (run.length) { out += threadNoteHtml(run, newSince); run = []; prev = null; } };
   for (const m of list) {
     const d = new Date(m.ts).toDateString();
     const note = !inThread && m.thread_root && !m.in_channel;
@@ -1064,9 +1099,11 @@ function messagesHtml(list, inThread, newSince = null) {
       prev = null;
     }
     if (note) { run.push(m); continue; }
+    const reply = m.thread_root && !inThread;
+    const sameThread = reply && prev && (prev.thread_root === m.thread_root || prev.id === m.thread_root);
     const grouped = prev && prev.author_id === m.author_id && m.ts - prev.ts < 5 * 60e3 && !prev.deleted && !m.deleted
-      && !(m.thread_root && !inThread);
-    const html = messageHtml(m, grouped, inThread);
+      && (!reply || prev.thread_root === m.thread_root) && !(prev.thread_root && !inThread && !reply);
+    const html = messageHtml(m, grouped, inThread, sameThread);
     out += dividerShown && fresh ? html.replace('class="msg ', 'class="msg fresh ') : html;
     prev = m;
   }
@@ -1124,9 +1161,14 @@ async function loadOlder() {
 RENDER.typing = function renderTyping() {
   const el = $('#typing');
   const names = [];
+  const now = Date.now();
   if (S.open) {
-    const now = Date.now();
     for (const [name, until] of S.typing.get(key(S.open.a, S.open.c)) || []) if (until > now) names.push(name);
+  }
+  // Expired names everywhere, so the map does not keep every conversation ever typed in.
+  for (const [k, who] of S.typing) {
+    for (const [name, until] of who) if (until <= now) who.delete(name);
+    if (!who.size) S.typing.delete(k);
   }
   el.textContent = !names.length ? '' : names.length === 1 ? `${names[0]} is typing...`
     : names.length === 2 ? `${names[0]} and ${names[1]} are typing...` : 'Several people are typing...';
@@ -1350,16 +1392,22 @@ const EMOJI_TAB_ICONS = ['clock', 'smile', 'person', 'leaf', 'cup', 'car', 'ball
 
 /** How often each emoji was picked here (a per-viewer convenience, so localStorage). */
 let emojiUse;
+let topCache = null;
 function useEmoji(name) {
   topEmoji(0);
+  topCache = null;
   emojiUse[name] = (emojiUse[name] || 0) + 1;
   save('emojiUse', emojiUse);
 }
 /** The `n` most used emojis, topped up from the quick reactions. */
 function topEmoji(n, base = QUICK_REACTIONS) {
   emojiUse ??= load('emojiUse') || {};
+  // The message bar asks for the top 4 on every message: sorted once until the next pick.
+  if (n === 4 && base === QUICK_REACTIONS && topCache) return topCache;
   const used = Object.keys(emojiUse).filter((k) => EMOJI[k]).sort((a, b) => emojiUse[b] - emojiUse[a]);
-  return [...new Set([...used, ...base])].slice(0, n);
+  const top = [...new Set([...used, ...base])].slice(0, n);
+  if (n === 4 && base === QUICK_REACTIONS) topCache = top;
+  return top;
 }
 
 function showFullEmojiPicker(anchor, first, onPick) {
@@ -1497,9 +1545,30 @@ function togglePreview() {
 // ------------------------------------------------------------ right panel
 
 /** `back` is the panel to return to (search results). */
+/**
+ * Opens a conversation at one message: a thread reply opens its thread with the reply
+ * highlighted, other messages are scrolled to (popups, Home).
+ */
+async function openTarget(a, c, id = null, root = null) {
+  await openChannel(a, c);
+  if (!id) return;
+  S.flash = id;
+  if (root) {
+    await openThread(root);
+    const el = $('#thread-body')?.querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+    el?.scrollIntoView({ block: 'center' });
+    setTimeout(() => { if (S.flash === id) { S.flash = null; schedule('panel', 'messages'); } }, 2200);
+    return;
+  }
+  const m = S.messages.find((x) => x.id === id);
+  if (m) jumpTo(a, c, id, m);
+  else S.flash = null;
+}
+
 async function openThread(rootId, back = null) {
   if (!S.open) return;
   const { a, c } = S.open;
+  invoke('thread_opened', { account_id: a, channel_id: c, root_id: rootId }).catch(() => {});
   S.panel = { type: 'thread', a, c, root: rootId, messages: S.messages.filter((m) => m.id === rootId), back };
   renderPanel(true);
   try {
@@ -2474,6 +2543,8 @@ function onMessageAreaClick(e, inPanel) {
     invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x)));
     return;
   }
+  const card = e.target.closest('.file-card');
+  if (card) { openFile(findMessage(e.target.closest('.msg')?.dataset.id, inPanel)?.account_id || (inPanel ? S.panel?.a : S.open?.a), card); return; }
   const img = e.target.closest('img[data-full]');
   if (img) { openViewer(img.dataset.full); return; }
   const who = e.target.closest('[data-person]');
@@ -2639,7 +2710,7 @@ function bindUi() {
       return;
     }
     const item = e.target.closest('.home-item');
-    if (item) { openChannel(item.dataset.a, item.dataset.c); return; }
+    if (item) { openTarget(item.dataset.a, item.dataset.c, item.dataset.id || null, item.dataset.root || null); return; }
     const head = e.target.closest('[data-rail]');
     if (head) selectRail(head.dataset.rail);
   });
@@ -2770,7 +2841,7 @@ function bindUi() {
     const cv = e.target.closest('[data-canvas]');
     if (cv && S.panel?.type === 'gallery') { openCanvas(S.panel.a, cv.dataset.canvas, S.panel.details?.canvases || []); return; }
     const hit = e.target.closest('.hit');
-    if (hit && !e.target.closest('a[data-url], img[data-full], [data-act="toggle-reaction"], [data-person]')) {
+    if (hit && !e.target.closest('a[data-url], img[data-full], .file-card, [data-act="toggle-reaction"], [data-person]')) {
       jumpTo(hit.dataset.a, hit.dataset.c, hit.dataset.id);
       return;
     }

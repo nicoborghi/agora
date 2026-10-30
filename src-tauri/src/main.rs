@@ -45,6 +45,8 @@ fn main() {
             let store = Arc::new(Store::open(&data_dir.join("agora.db"), key.as_deref())?);
 
             tray::create(app.handle())?;
+            let handle = app.handle().clone();
+            std::thread::spawn(move || commands::prune_files(&handle));
             let popups = Arc::new(popup::Popups::default());
             let frontend = Arc::new(frontend::TauriFrontend::new(app.handle().clone(), popups.clone()));
             let engine = Engine::new(store, frontend, Arc::new(factory::Factory));
@@ -110,6 +112,7 @@ fn main() {
             commands::find_users,
             commands::upload_file,
             commands::open_url,
+            commands::open_attachment,
             commands::set_zoom,
             commands::set_titlebar,
             commands::get_profile,
@@ -120,6 +123,7 @@ fn main() {
             commands::channel_members,
             commands::channel_details,
             commands::get_canvas,
+            commands::thread_opened,
             commands::popup_ready,
             commands::popup_resize,
             commands::popup_closed,

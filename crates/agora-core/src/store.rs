@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_ts ON messages (account_id, channel_id, ts);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages (account_id, channel_id, thread_root, ts);
+-- Conversation pages read top-level messages and thread replies separately.
+CREATE INDEX IF NOT EXISTS messages_roots ON messages (account_id, channel_id, ts) WHERE thread_root IS NULL;
+CREATE INDEX IF NOT EXISTS messages_replies ON messages (account_id, channel_id, ts) WHERE thread_root IS NOT NULL;
 CREATE TABLE IF NOT EXISTS message_versions (
     account_id TEXT NOT NULL, channel_id TEXT NOT NULL, id TEXT NOT NULL,
     edited_at INTEGER NOT NULL, text TEXT NOT NULL

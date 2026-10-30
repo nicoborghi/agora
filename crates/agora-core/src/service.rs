@@ -85,6 +85,12 @@ pub trait Service: Send + Sync {
 
     async fn mark_read(&self, channel_id: &str, latest: Option<&Message>) -> SResult<()>;
 
+    /// Marks one thread read up to `latest` (its newest reply), where the service keeps thread
+    /// read state apart from the conversation's. Otherwise nothing to do.
+    async fn mark_thread_read(&self, _channel_id: &str, _root: &str, _latest: &Message) -> SResult<()> {
+        Ok(())
+    }
+
     async fn upload(
         &self,
         _channel_id: &str,
@@ -144,6 +150,12 @@ pub trait Service: Send + Sync {
         Err(ServiceError::Unsupported)
     }
 
+    /// Saves a file (`Attachment::path`) to `dest`, a piece at a time, so large files never
+    /// sit in memory.
+    async fn download(&self, _path: &str, _dest: &mut Download) -> SResult<()> {
+        Err(ServiceError::Unsupported)
+    }
+
     /// Downloads a service path produced by [`crate::model::media_url`] (files, thumbnails,
     /// avatars), so the UI can show content that needs authentication.
     async fn fetch(&self, _path: &str) -> SResult<Media> {
@@ -160,4 +172,28 @@ pub trait Service: Send + Sync {
 /// only place that knows every connector crate.
 pub trait ServiceFactory: Send + Sync {
     fn create(&self, account: &Account) -> Result<Arc<dyn Service>, String>;
+}
+
+/// A file being saved by [`Service::download`]: written as it arrives, with a size limit.
+pub struct Download {
+    file: std::fs::File,
+    written: u64,
+    limit: u64,
+    /// Content type the server sent.
+    pub mime: String,
+}
+
+impl Download {
+    pub fn create(path: &std::path::Path, limit: u64) -> std::io::Result<Self> {
+        Ok(Self { file: std::fs::File::create(path)?, written: 0, limit, mime: String::new() })
+    }
+
+    pub fn write(&mut self, chunk: &[u8]) -> SResult<()> {
+        use std::io::Write;
+        self.written += chunk.len() as u64;
+        if self.written > self.limit {
+            return Err(ServiceError::Other(format!("file larger than {} MB", self.limit / 1_000_000)));
+        }
+        self.file.write_all(chunk).map_err(|e| ServiceError::Other(format!("saving the file: {e}")))
+    }
 }

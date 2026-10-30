@@ -353,6 +353,10 @@ pub struct Attachment {
     pub width: Option<u32>,
     #[serde(default)]
     pub height: Option<u32>,
+    /// Service path for a signed-in download ([`crate::service::Service::download`]), so the
+    /// file opens without a web login; `url` stays as the browser fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

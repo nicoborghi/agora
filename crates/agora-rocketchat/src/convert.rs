@@ -198,13 +198,28 @@ pub fn message(acc: &str, server: &str, m: &Value, uid_of: &dyn Fn(&str) -> Stri
     for a in m["attachments"].as_array().into_iter().flatten() {
         let link = a["title_link"].as_str().filter(|l| l.starts_with("/file-upload/"));
         if let Some(link) = link {
-            let image = a["image_url"].as_str();
+            let preview = a["image_url"].as_str();
             let name = s(&a["title"]);
+            // A PDF can come with a preview picture: the file's own type decides, not the preview.
+            let file_type = m["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .chain(std::iter::once(&m["file"]))
+                .find(|f| f["name"].as_str() == Some(name.as_str()))
+                .and_then(|f| f["type"].as_str());
+            let mime = a["image_type"]
+                .as_str()
+                .or(file_type)
+                .map(str::to_string)
+                .unwrap_or_else(|| if preview.is_some() { "image/*".into() } else { String::new() });
+            let image = mime.starts_with("image/");
             attachments.push(Attachment {
                 id: link.split('/').nth(2).unwrap_or_default().to_string(),
-                url: if image.is_some() { media_url(acc, link) } else { format!("{server}{link}?download") },
-                thumb_url: image.filter(|u| u.starts_with('/') && *u != link).map(|u| media_url(acc, u)),
-                mime: a["image_type"].as_str().map(str::to_string).unwrap_or_else(|| if image.is_some() { "image/*".into() } else { String::new() }),
+                path: Some(link.to_string()),
+                url: if image { media_url(acc, link) } else { format!("{server}{link}?download") },
+                thumb_url: preview.filter(|u| u.starts_with('/') && *u != link).map(|u| media_url(acc, u)),
+                mime,
                 size: a["image_size"].as_u64().unwrap_or(0),
                 width: a["image_dimensions"]["width"].as_u64().map(|w| w as u32),
                 height: a["image_dimensions"]["height"].as_u64().map(|h| h as u32),

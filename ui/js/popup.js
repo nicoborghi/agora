@@ -29,7 +29,7 @@ function add(n) {
   el.addEventListener('mouseleave', arm);
   el.addEventListener('click', () => {
     clearTimeout(timer);
-    invoke('popup_open', { account_id: n.account_id, channel_id: n.channel_id });
+    invoke('popup_open', { account_id: n.account_id, channel_id: n.channel_id, message_id: n.message_id || null, thread_root: n.thread_root || null });
     remove(el);
   });
   box.prepend(el);

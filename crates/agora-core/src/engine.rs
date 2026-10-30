@@ -159,6 +159,9 @@ pub struct PopupNote {
     pub preview: String,
     pub color: String,
     pub seconds: u32,
+    /// The message, and its thread when it is a reply, so a click opens it there.
+    pub message_id: String,
+    pub thread_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,6 +215,8 @@ pub struct Engine {
     /// Only for people we have a conversation with; a few hundred entries at most.
     presence: Mutex<HashMap<Key, Presence>>,
     dots: Mutex<HashMap<Key, String>>,
+    /// Threads whose new replies counted for the user, per conversation, until read.
+    unread_threads: Mutex<HashMap<Key, HashSet<String>>>,
     view: Mutex<View>,
     pending_reads: Arc<Mutex<HashMap<Key, Message>>>,
     /// Conversations whose full server history is already local.
@@ -223,6 +228,8 @@ pub struct Engine {
 
 /// How often the same archive page is checked against the service.
 const VERIFY_EVERY: Duration = Duration::from_secs(30);
+/// Largest attachment Agora downloads to open.
+const MAX_DOWNLOAD: u64 = 500_000_000;
 /// Thread replies shown with one page of a conversation.
 const REPLIES_PER_PAGE: u32 = 300;
 /// Pages fetched to close one gap; older ones are filled while scrolling up.
@@ -266,6 +273,7 @@ impl Engine {
             conn: Mutex::default(),
             presence: Mutex::default(),
             dots: Mutex::default(),
+            unread_threads: Mutex::default(),
             view: Mutex::default(),
             pending_reads: Arc::default(),
             exhausted: Mutex::default(),
@@ -608,6 +616,9 @@ impl Engine {
         let counts = !is_self && !viewing && (m.thread_root.is_none() || mentions_me);
         if counts {
             self.store.bump_unread(acc, &m.channel_id, mentions_me)?;
+            if let Some(root) = &m.thread_root {
+                lock(&self.unread_threads).entry((acc.to_string(), m.channel_id.clone())).or_default().insert(root.clone());
+            }
         }
         if viewing && !is_self {
             self.queue_mark_read(acc, m.clone());
@@ -644,6 +655,8 @@ impl Engine {
                 preview: text::preview(&m.text, 160),
                 color,
                 seconds: settings.notifications.popup_seconds,
+                message_id: m.id.clone(),
+                thread_root: m.thread_root.clone(),
             });
         }
         if decision.sound {
@@ -1052,7 +1065,32 @@ impl Engine {
         if let Some(m) = latest {
             self.queue_mark_read(acc, m);
         }
+        // The thread notes are on screen with the conversation: their threads are read too.
+        let threads = lock(&self.unread_threads).remove(&(acc.to_string(), ch.to_string())).unwrap_or_default();
+        for root in threads {
+            self.mark_thread_read(acc, ch, &root);
+        }
         self.emit_channel(acc, ch).map_err(err)
+    }
+
+    /// Tells the service a thread is read up to its newest reply (in the background).
+    fn mark_thread_read(&self, acc: &str, ch: &str, root: &str) {
+        let Some(svc) = self.service(acc) else { return };
+        let Ok(Some(latest)) = self.store.thread(acc, ch, root).map(|t| t.into_iter().last().map(|a| a.message)) else { return };
+        let (ch, root) = (ch.to_string(), root.to_string());
+        self.spawn(async move {
+            if let Err(e) = svc.mark_thread_read(&ch, &root, &latest).await {
+                tracing::debug!("thread read failed: {e}");
+            }
+        });
+    }
+
+    /// The user opened a thread: it is read, here and on the service.
+    pub fn thread_opened(&self, acc: &str, ch: &str, root: &str) {
+        if let Some(set) = lock(&self.unread_threads).get_mut(&(acc.to_string(), ch.to_string())) {
+            set.remove(root);
+        }
+        self.mark_thread_read(acc, ch, root);
     }
 
     fn connected(&self, acc: &str) -> Result<Arc<dyn Service>, String> {
@@ -1135,14 +1173,31 @@ impl Engine {
             }
             *n += 1;
             let me = self.self_id(&c.account_id);
-            let messages = self
+            let mut news: Vec<Authored> = self
                 .store
                 .messages(&c.account_id, &c.id, None, 3)
                 .map_err(err)?
                 .into_iter()
                 .filter(|a| a.message.ts > c.last_read && !a.message.deleted)
-                .map(|a| MessageView::new(a, me.as_deref()))
                 .collect();
+            // Thread replies that are for you: they mention you or follow up on your thread.
+            let mine = |m: &Message| {
+                let id = me.as_deref().unwrap_or_default();
+                !id.is_empty()
+                    && m.author_id != id
+                    && (m.mentions.iter().any(|u| u == id || u == MENTION_ALL)
+                        || m.thread_root.as_deref().is_some_and(|r| self.store.in_thread(&c.account_id, &c.id, r, id).unwrap_or(false)))
+            };
+            news.extend(
+                self.store
+                    .replies_between(&c.account_id, &c.id, c.last_read + 1, None, 20)
+                    .map_err(err)?
+                    .into_iter()
+                    .filter(|a| !a.message.deleted && mine(&a.message)),
+            );
+            news.sort_by_key(|a| a.message.ts);
+            let skip = news.len().saturating_sub(3);
+            let messages = news.into_iter().skip(skip).map(|a| MessageView::new(a, me.as_deref())).collect();
             out.push(HomeItem { channel: self.channel_view(c).map_err(err)?, messages });
         }
         Ok(out)
@@ -1321,6 +1376,36 @@ impl Engine {
         };
         let pins = d.pins.into_iter().map(|m| self.message_view(m)).collect::<StoreResult<Vec<_>>>().map_err(err)?;
         Ok(ChannelDetailsView { purpose: d.purpose, created: d.created, creator, bookmarks: d.bookmarks, pins, canvases: d.canvases })
+    }
+
+    /// Saves an attachment under `dir` (once: a finished download is reused) and returns where.
+    pub async fn download_file(&self, acc: &str, path: &str, name: &str, dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+        // One folder per file (a hash of its path), keeping the file's own name so the system
+        // picks the right app and the user sees a sensible name.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&(acc, path), &mut h);
+        let folder = dir.join(format!("{:016x}", std::hash::Hasher::finish(&h)));
+        let clean: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
+        let clean = clean.trim().trim_matches('.');
+        let target = folder.join(if clean.is_empty() { "file" } else { clean });
+        if target.exists() {
+            return Ok(target);
+        }
+        std::fs::create_dir_all(&folder).map_err(err)?;
+        let part = folder.join(".download");
+        let svc = self.connected(acc)?;
+        let mut dest = Download::create(&part, MAX_DOWNLOAD).map_err(err)?;
+        let result = svc.download(path, &mut dest).await;
+        drop(dest);
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&part);
+            return Err(match e {
+                ServiceError::Unsupported => "This workspace cannot download files here.".into(),
+                e => e.to_string(),
+            });
+        }
+        std::fs::rename(&part, &target).map_err(err)?;
+        Ok(target)
     }
 
     pub async fn canvas(&self, acc: &str, id: &str) -> Result<Canvas, String> {

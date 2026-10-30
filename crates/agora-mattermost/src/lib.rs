@@ -585,6 +585,21 @@ impl Service for MattermostService {
             .map(drop)
     }
 
+    /// Collapsed threads keep their own read state, per team: the thread's team is tried first
+    /// when known, then the others (direct messages belong to no team).
+    async fn mark_thread_read(&self, _channel_id: &str, root: &str, latest: &Message) -> SResult<()> {
+        let teams = self.st().teams.clone();
+        let mut last = Ok(());
+        for team in teams {
+            let path = format!("/users/me/teams/{team}/threads/{root}/read/{}", latest.ts);
+            last = self.call(self.req(Method::PUT, &path)).await.map(drop);
+            if last.is_ok() {
+                break;
+            }
+        }
+        last
+    }
+
     async fn upload(&self, channel_id: &str, file_name: &str, bytes: Vec<u8>, thread_root: Option<&str>) -> SResult<()> {
         let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.to_string());
         let form = reqwest::multipart::Form::new().text("channel_id", channel_id.to_string()).part("files", part);
@@ -646,6 +661,19 @@ impl Service for MattermostService {
             return Err(ServiceError::Other("path not allowed".into()));
         }
         self.fetch_url(&format!("{}/api/v4{path}", self.server), true).await
+    }
+
+    async fn download(&self, path: &str, dest: &mut Download) -> SResult<()> {
+        if !path.starts_with("/files/") || path.contains("..") {
+            return Err(ServiceError::Other("path not allowed".into()));
+        }
+        let rb = self.http.get(format!("{}/api/v4{path}", self.server)).bearer_auth(&self.token);
+        let mut resp = check(rb.send().await.map_err(net)?).await?;
+        dest.mime = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+        while let Some(chunk) = resp.chunk().await.map_err(net)? {
+            dest.write(&chunk)?;
+        }
+        Ok(())
     }
 
     /// Favorites go through the `favorite_channel` preference, which the server keeps in

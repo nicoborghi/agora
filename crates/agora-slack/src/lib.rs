@@ -784,6 +784,13 @@ impl Service for SlackService {
         self.api("conversations.mark", &[("channel", channel_id.to_string()), ("ts", ts)]).await.map(drop)
     }
 
+    /// Not in Slack's public API, but what its web client calls; a failure only leaves the
+    /// thread unread in Slack's own Threads view.
+    async fn mark_thread_read(&self, channel_id: &str, root: &str, latest: &Message) -> SResult<()> {
+        let params = [("channel", channel_id.to_string()), ("thread_ts", root.to_string()), ("ts", latest.id.clone()), ("read", "1".into())];
+        self.api("subscriptions.thread.mark", &params).await.map(drop)
+    }
+
     /// The current three-step upload (files.upload is retired).
     async fn upload(&self, channel_id: &str, file_name: &str, bytes: Vec<u8>, thread_root: Option<&str>) -> SResult<()> {
         let params = [("filename", file_name.to_string()), ("length", bytes.len().to_string())];
@@ -1006,6 +1013,26 @@ impl Service for SlackService {
             return Err(ServiceError::Other("path not allowed".into()));
         }
         self.fetch_url(&format!("https://files.slack.com{path}"), true).await
+    }
+
+    async fn download(&self, path: &str, dest: &mut Download) -> SResult<()> {
+        if !path.starts_with("/files-pri/") || path.contains("..") {
+            return Err(ServiceError::Other("path not allowed".into()));
+        }
+        let url = format!("https://files.slack.com{path}");
+        let mut resp = self.http.get(&url).bearer_auth(&self.creds.token).header("Cookie", self.cookie()).send().await.map_err(net)?;
+        if !resp.status().is_success() {
+            return Err(ServiceError::Other(format!("HTTP {}", resp.status())));
+        }
+        dest.mime = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+        // An expired session gets the sign-in page instead of the file.
+        if dest.mime.starts_with("text/html") {
+            return Err(ServiceError::Auth("Slack sent its sign-in page: sign in again".into()));
+        }
+        while let Some(chunk) = resp.chunk().await.map_err(net)? {
+            dest.write(&chunk)?;
+        }
+        Ok(())
     }
 
     fn to_remote_markdown(&self, md: &str) -> String {

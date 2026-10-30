@@ -248,6 +248,13 @@ pub async fn channel_members(
     state.engine.members(&account_id, &channel_id, cursor.as_deref()).await
 }
 
+/// A thread was opened: mark it read on the service too.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn thread_opened(state: State<'_, AppState>, account_id: String, channel_id: String, root_id: String) -> CmdResult<()> {
+    state.engine.thread_opened(&account_id, &channel_id, &root_id);
+    Ok(())
+}
+
 /// One canvas, from the Details panel or a canvas link in a message.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_canvas(state: State<'_, AppState>, account_id: String, id: String) -> CmdResult<Canvas> {
@@ -707,18 +714,59 @@ pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: Str
     Ok(())
 }
 
+/// Hands a link or a file to the system, which opens it with the default app.
+fn open_with_system(target: &std::ffi::OsStr) -> CmdResult<()> {
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(target).spawn().map_err(err)?;
+    Ok(())
+}
+
 /// Opens http(s) links in the default browser, never inside the app.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_url(url: String) -> CmdResult<()> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("only http(s) links can be opened".into());
     }
-    std::process::Command::new("rundll32")
-        .arg("url.dll,FileProtocolHandler")
-        .arg(&url)
-        .spawn()
-        .map_err(err)?;
-    Ok(())
+    open_with_system(url.as_ref())
+}
+
+/// Where downloaded attachments are kept (a cache: pruned at start, see `prune_files`).
+fn files_dir(app: &AppHandle) -> CmdResult<std::path::PathBuf> {
+    Ok(app.path().app_cache_dir().map_err(err)?.join("files"))
+}
+
+/// Downloads an attachment signed in (no web login) and opens it with the default app.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn open_attachment(app: AppHandle, state: State<'_, AppState>, account_id: String, path: String, name: String) -> CmdResult<()> {
+    let dir = files_dir(&app)?;
+    let file = state.engine.download_file(&account_id, &path, &name, &dir).await?;
+    // Only files Agora itself saved, in its own cache folder.
+    if !file.starts_with(&dir) {
+        return Err("not an Agora download".into());
+    }
+    open_with_system(file.as_os_str())
+}
+
+/// Removes downloads older than a week, so the cache does not grow without end.
+pub fn prune_files(app: &AppHandle) {
+    let Ok(dir) = files_dir(app) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let week = std::time::Duration::from_secs(7 * 24 * 3600);
+    for e in entries.flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > week);
+        if old {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -741,10 +789,18 @@ pub async fn popup_closed(app: AppHandle, state: State<'_, AppState>) -> CmdResu
 struct OpenTarget {
     account_id: String,
     channel_id: String,
+    message_id: Option<String>,
+    thread_root: Option<String>,
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn popup_open(app: AppHandle, account_id: String, channel_id: String) -> CmdResult<()> {
+pub async fn popup_open(
+    app: AppHandle,
+    account_id: String,
+    channel_id: String,
+    message_id: Option<String>,
+    thread_root: Option<String>,
+) -> CmdResult<()> {
     tray::show_main(&app);
-    app.emit_to("main", "agora-open", OpenTarget { account_id, channel_id }).map_err(err)
+    app.emit_to("main", "agora-open", OpenTarget { account_id, channel_id, message_id, thread_root }).map_err(err)
 }

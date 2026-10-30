@@ -570,7 +570,8 @@ impl Service for RocketChatService {
     }
 
     async fn mark_read(&self, channel_id: &str, _latest: Option<&Message>) -> SResult<()> {
-        self.post("subscriptions.read", json!({ "rid": channel_id })).await.map(drop)
+        // Threads too: their replies are on screen with the conversation (as thread notes).
+        self.post("subscriptions.read", json!({ "rid": channel_id, "readThreads": true })).await.map(drop)
     }
 
     /// `rooms.media` + `rooms.mediaConfirm` (6.8+), falling back to the older `rooms.upload`.
@@ -755,6 +756,20 @@ impl Service for RocketChatService {
             return Err(ServiceError::Other("path not allowed".into()));
         }
         self.fetch_url(path).await
+    }
+
+    async fn download(&self, path: &str, dest: &mut Download) -> SResult<()> {
+        if !path.starts_with("/file-upload/") || path.contains("..") {
+            return Err(ServiceError::Other("path not allowed".into()));
+        }
+        let cookie = format!("{COOKIE_UID}={}; {COOKIE_TOKEN}={}", self.creds.user_id, self.creds.token);
+        let rb = self.authed(self.http.get(format!("{}{path}", self.server))).header("Cookie", cookie);
+        let mut resp = check(rb.send().await.map_err(net)?).await?;
+        dest.mime = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+        while let Some(chunk) = resp.chunk().await.map_err(net)? {
+            dest.write(&chunk)?;
+        }
+        Ok(())
     }
 
     fn to_remote_markdown(&self, md: &str) -> String {
