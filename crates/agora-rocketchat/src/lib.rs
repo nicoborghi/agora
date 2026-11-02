@@ -792,7 +792,13 @@ impl Service for RocketChatService {
         if !allowed || path.contains("..") {
             return Err(ServiceError::Other("path not allowed".into()));
         }
-        self.fetch_url(path).await
+        let media = self.fetch_url(path).await?;
+        // Without a picture the server draws the username's first letter as an SVG; failing
+        // lets the UI show initials of the full name instead.
+        if path.starts_with("/avatar/") && media.mime.starts_with("image/svg") {
+            return Err(ServiceError::Other("no avatar".into()));
+        }
+        Ok(media)
     }
 
     async fn download(&self, path: &str, dest: &mut Download) -> SResult<()> {

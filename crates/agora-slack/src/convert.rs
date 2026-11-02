@@ -165,6 +165,60 @@ pub fn to_slack(md: &str) -> String {
     emphasis::to_single(&linked)
 }
 
+/// `@Shown Name` (spaces or no-break spaces) → `<@U123>` for the people `id_of` knows by
+/// lower-case name. Slack's `link_names` only knows one-word usernames; the longest known name
+/// wins, so "@Ann Lee" beats "@Ann".
+pub fn tag_people(mrkdwn: &str, id_of: &dyn Fn(&str) -> Option<String>) -> String {
+    emphasis::map_text(mrkdwn, |t| {
+        let mut out = String::with_capacity(t.len());
+        let mut i = 0;
+        while let Some(off) = t[i..].find('@') {
+            let at = i + off;
+            out.push_str(&t[i..at]);
+            // Not inside a word, an address or a link.
+            let free = t[..at].chars().last().map_or(true, |c| !c.is_alphanumeric() && !matches!(c, '_' | '/' | '<' | '.'));
+            match free.then(|| longest_name(&t[at + 1..], id_of)).flatten() {
+                Some((len, id)) => {
+                    out.push_str(&format!("<@{id}>"));
+                    i = at + 1 + len;
+                }
+                None => {
+                    out.push('@');
+                    i = at + 1;
+                }
+            }
+        }
+        out.push_str(&t[i..]);
+        out
+    })
+}
+
+/// Length and id of the longest known name `s` starts with (at most four words).
+fn longest_name(s: &str, id_of: &dyn Fn(&str) -> Option<String>) -> Option<(usize, String)> {
+    let mut best = None;
+    let mut spaces = 0;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == '\n' || i > 64 {
+            break;
+        }
+        if c == ' ' || c == '\u{a0}' {
+            spaces += 1;
+            if spaces > 3 {
+                break;
+            }
+            continue;
+        }
+        let end = i + c.len_utf8();
+        if chars.peek().map_or(true, |&(_, n)| !n.is_alphanumeric() && n != '_') {
+            if let Some(id) = id_of(&s[..end].replace('\u{a0}', " ").to_lowercase()) {
+                best = Some((end, id));
+            }
+        }
+    }
+    best
+}
+
 // ------------------------------------------------------------ users
 
 /// `users.info` (with `fields`, the labelled custom profile fields from `users.profile.get`).
@@ -511,6 +565,18 @@ mod tests {
         assert_eq!(to_slack("**bold** *it* a < b & [docs](https://x.org/a?b=1&c=2)"), "*bold* _it_ a &lt; b &amp; <https://x.org/a?b=1&amp;c=2|docs>");
         assert_eq!(to_slack("`**raw** [x](https://y)`"), "`**raw** [x](https://y)`");
         assert_eq!(to_slack("[not a link](file)"), "[not a link](file)");
+    }
+
+    #[test]
+    fn people_tagged() {
+        let id_of = |n: &str| match n {
+            "ada lovelace" => Some("U5".to_string()),
+            "ann" => Some("U6".to_string()),
+            _ => None,
+        };
+        assert_eq!(tag_people("hi @Ada\u{a0}Lovelace, ok", &id_of), "hi <@U5>, ok");
+        assert_eq!(tag_people("@ada lovelace and @Ann.", &id_of), "<@U5> and <@U6>.");
+        assert_eq!(tag_people("@Annie a@ann.org `@ann`", &id_of), "@Annie a@ann.org `@ann`");
     }
 
     #[test]

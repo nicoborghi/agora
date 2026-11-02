@@ -320,6 +320,26 @@ pub struct Bookmark {
     pub url: String,
 }
 
+/// An item on Agora's own to-do list: kept in the archive, never sent to the service. It is
+/// about a message, or (your own: empty account and conversation) just its `text`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Todo {
+    pub account_id: String,
+    pub channel_id: String,
+    pub message_id: String,
+    pub created_at: Millis,
+    /// 0 none, 1 high, 2 medium, 3 low.
+    pub priority: u8,
+    /// The project it is filed under; empty for none.
+    pub project: String,
+    pub note: String,
+    pub due: Option<Millis>,
+    pub done_at: Option<Millis>,
+    /// What to do, for your own; empty for one about a message.
+    #[serde(default)]
+    pub text: String,
+}
+
 /// One page of a conversation's members. `next` continues the list; `total` is the member
 /// count when the service reports it.
 #[derive(Debug, Clone, Default)]

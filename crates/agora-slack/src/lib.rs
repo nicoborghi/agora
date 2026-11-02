@@ -157,6 +157,8 @@ struct State {
     team_id: String,
     /// User id -> display name, for mentions and system messages.
     names: HashMap<String, String>,
+    /// Lower-case handle and shown name -> user id, to tag `@Name` in what we send.
+    handles: HashMap<String, String>,
     known_users: HashSet<String>,
     /// Profiles fetched while converting, handed to the engine by `users()`.
     pending_users: HashMap<String, User>,
@@ -216,14 +218,26 @@ impl SlackService {
         st.names.get(id).or_else(|| st.channel_names.get(id)).cloned()
     }
 
+    /// Markdown → mrkdwn with `@Name` tagged as `<@U123>` for everyone we know.
+    fn outgoing(&self, md: &str) -> String {
+        let st = self.st();
+        convert::tag_people(&convert::to_slack(md), &|n| st.handles.get(n).cloned())
+    }
+
     fn learn(&self, users: &[User]) {
         let mut st = self.st();
         if st.names.len() > MAX_NAMES {
             st.names.clear();
+            st.handles.clear();
         }
         for u in users {
             let shown = if u.display_name.is_empty() { u.name.clone() } else { u.display_name.clone() };
             st.names.insert(u.id.clone(), shown);
+            for n in [&u.name, &u.display_name] {
+                if !n.trim().is_empty() {
+                    st.handles.insert(n.trim().to_lowercase(), u.id.clone());
+                }
+            }
         }
     }
 
@@ -760,7 +774,7 @@ impl Service for SlackService {
     }
 
     async fn send(&self, channel_id: &str, text: &str, thread_root: Option<&str>, broadcast: bool) -> SResult<Message> {
-        let mut params = vec![("channel", channel_id.to_string()), ("text", convert::to_slack(text)), ("link_names", "true".into())];
+        let mut params = vec![("channel", channel_id.to_string()), ("text", self.outgoing(text)), ("link_names", "true".into())];
         if let Some(root) = thread_root {
             params.push(("thread_ts", root.to_string()));
             if broadcast {
@@ -778,7 +792,7 @@ impl Service for SlackService {
         let params = [
             ("channel", channel_id.to_string()),
             ("ts", message_id.to_string()),
-            ("text", convert::to_slack(text)),
+            ("text", self.outgoing(text)),
             ("link_names", "true".into()),
         ];
         self.api("chat.update", &params).await.map(drop)
@@ -952,6 +966,10 @@ impl Service for SlackService {
         out.extend(self.fetch_users(&missing).await);
         self.st().known_users.extend(out.iter().map(|u| u.id.clone()));
         Ok(out)
+    }
+
+    fn know_people(&self, users: &[User]) {
+        self.learn(users);
     }
 
     async fn profile(&self, user_id: &str) -> SResult<Profile> {

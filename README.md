@@ -35,6 +35,7 @@ Agora is not a wrapper that stacks web apps in different tabs. It talks to each 
 - **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
 - **Threads you can follow.** Replies show in the conversation with what they answer; notifications open the reply in its thread; replies can also go to the conversation.
 - **Files and links that just work.** Any attachment opens in your usual app without a web login; copy a link to any message; mark messages unread to come back to them.
+- **One to-do list for every workspace.** Put any message on it from its hover bar, or type your own. Priority, due date with the days left, projects and notes; done items are kept.
 - **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
 
 
@@ -265,7 +266,8 @@ Done: the common core and archive, the Demo workspace, the Mattermost, Rocket.Ch
 cross-service search with dates, notification levels and quiet hours, groups, profiles and members, the image
 editor, themes and accent colours, automated releases, signed self-updates, bookmarks, drafts, macOS and
 Ubuntu builds, files opened without a web login, message links, mark as unread, new direct messages, workspace
-emoji, start at login, single instance, an image cache with a size limit, a "What's new" window after updates.
+emoji, start at login, single instance, an image cache with a size limit, a "What's new" window after updates,
+a to-do list across workspaces.
 
 Next: smoother redrawing of busy conversations (only what changed), Slack canvases on real workspaces (images
 inside canvases), pinned messages for Mattermost and Rocket.Chat.

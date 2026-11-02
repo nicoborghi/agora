@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     account_id TEXT NOT NULL, channel_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at INTEGER NOT NULL,
     PRIMARY KEY (account_id, channel_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS todos (
+    account_id TEXT NOT NULL, channel_id TEXT NOT NULL, message_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+    due INTEGER, done_at INTEGER,
+    PRIMARY KEY (account_id, channel_id, message_id)
+);
 ";
 
 const MSG_COLS: &str = "m.account_id, m.channel_id, m.id, m.author_id, m.ts, m.text, m.thread_root, \
@@ -142,6 +148,7 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
     add_column(conn, "channels", "category", "TEXT NOT NULL DEFAULT ''")?;
     add_column(conn, "channels", "local_group", "TEXT")?;
     add_column(conn, "accounts", "icon_image", "TEXT")?;
+    add_column(conn, "todos", "text", "TEXT NOT NULL DEFAULT ''")?;
     if let Err(e) = ensure_fts(conn) {
         // Search then falls back to LIKE, slower but correct.
         tracing::warn!("full-text index unavailable: {e}");
@@ -208,6 +215,24 @@ pub struct Authored {
     pub message: Message,
     pub name: String,
     pub avatar: Option<String>,
+}
+
+const TODO_COLS: &str = "t.account_id, t.channel_id, t.message_id, t.created_at, t.priority, t.project, t.note, t.due, t.done_at, t.text";
+
+/// A to-do from [`TODO_COLS`], starting at column `at`.
+fn read_todo(r: &Row, at: usize) -> rusqlite::Result<Todo> {
+    Ok(Todo {
+        account_id: r.get(at)?,
+        channel_id: r.get(at + 1)?,
+        message_id: r.get(at + 2)?,
+        created_at: r.get(at + 3)?,
+        priority: r.get(at + 4)?,
+        project: r.get(at + 5)?,
+        note: r.get(at + 6)?,
+        due: r.get(at + 7)?,
+        done_at: r.get(at + 8)?,
+        text: r.get(at + 9)?,
+    })
 }
 
 fn read_authored(r: &Row) -> rusqlite::Result<Authored> {
@@ -492,7 +517,7 @@ impl Store {
         let tx = db.transaction()?;
         tx.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
         if purge {
-            for table in ["channels", "users", "messages", "message_versions", "channel_prefs", "bookmarks"] {
+            for table in ["channels", "users", "messages", "message_versions", "channel_prefs", "bookmarks", "todos"] {
                 tx.execute(&format!("DELETE FROM {table} WHERE account_id = ?1"), [id])?;
             }
         }
@@ -852,6 +877,54 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// To-dos are Agora's own too. Adding one twice keeps the first.
+    pub fn add_todo(&self, acc: &str, ch: &str, id: &str, now: Millis) -> StoreResult<()> {
+        self.db().execute(
+            "INSERT OR IGNORE INTO todos (account_id, channel_id, message_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![acc, ch, id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_todo(&self, acc: &str, ch: &str, id: &str) -> StoreResult<()> {
+        self.db().execute("DELETE FROM todos WHERE account_id = ?1 AND channel_id = ?2 AND message_id = ?3", params![acc, ch, id])?;
+        Ok(())
+    }
+
+    /// A to-do of your own, about no message: no account or conversation, `id` as its key.
+    pub fn add_own_todo(&self, id: &str, text: &str, project: &str, now: Millis) -> StoreResult<()> {
+        self.db().execute(
+            "INSERT INTO todos (account_id, channel_id, message_id, created_at, text, project) VALUES ('', '', ?1, ?2, ?3, ?4)",
+            params![id, now, text.trim(), project.trim()],
+        )?;
+        Ok(())
+    }
+
+    /// Saves priority, project, note, due date, done time and (for your own) the text.
+    pub fn update_todo(&self, t: &Todo) -> StoreResult<()> {
+        self.db().execute(
+            "UPDATE todos SET priority = ?4, project = ?5, note = ?6, due = ?7, done_at = ?8, text = ?9
+             WHERE account_id = ?1 AND channel_id = ?2 AND message_id = ?3",
+            params![t.account_id, t.channel_id, t.message_id, t.priority, t.project.trim(), t.note, t.due, t.done_at, t.text.trim()],
+        )?;
+        Ok(())
+    }
+
+    /// Every to-do, with its message when it is about one: open ones first, newest first.
+    pub fn todos(&self) -> StoreResult<Vec<(Todo, Option<Authored>)>> {
+        let db = self.db();
+        let mut st = db.prepare(&format!(
+            "SELECT {MSG_COLS}, {AUTHOR_NAME}, u.avatar_url, {TODO_COLS} FROM todos t
+             JOIN messages m ON m.account_id = t.account_id AND m.channel_id = t.channel_id AND m.id = t.message_id
+             {AUTHOR_JOIN}"
+        ))?;
+        let mut out = st.query_map([], |r| Ok((read_todo(r, 13)?, Some(read_authored(r)?))))?.collect::<Result<Vec<_>, _>>()?;
+        let mut st = db.prepare(&format!("SELECT {TODO_COLS} FROM todos t WHERE t.account_id = ''"))?;
+        out.extend(st.query_map([], |r| Ok((read_todo(r, 0)?, None)))?.collect::<Result<Vec<_>, _>>()?);
+        out.sort_by_key(|(t, _)| (t.done_at.is_some(), std::cmp::Reverse(t.created_at)));
+        Ok(out)
+    }
+
     /// How many of these message ids the archive does not have yet.
     pub fn missing_messages(&self, acc: &str, ch: &str, ids: &[String]) -> StoreResult<usize> {
         let db = self.db();
@@ -1126,6 +1199,34 @@ mod tests {
         assert_eq!(ids(&s), vec!["2", "1"]);
         s.set_bookmark("a", "c", "2", false, 0).unwrap();
         assert_eq!(ids(&s), vec!["1"]);
+    }
+
+    #[test]
+    fn todos_open_first_and_done_kept() {
+        let s = temp_store();
+        s.upsert_messages(&[msg("1", 10, None), msg("2", 20, None)]).unwrap();
+        s.add_todo("a", "c", "1", 100).unwrap();
+        s.add_todo("a", "c", "2", 200).unwrap();
+        s.add_todo("a", "c", "2", 300).unwrap(); // twice: still one, first date
+        let list = s.todos().unwrap();
+        assert_eq!(list.iter().map(|(t, _)| t.message_id.as_str()).collect::<Vec<_>>(), vec!["2", "1"]);
+        assert_eq!(list[0].0.created_at, 200);
+        let mut t = list[0].0.clone();
+        t.priority = 1;
+        t.project = " Thesis ".into();
+        t.done_at = Some(400);
+        s.update_todo(&t).unwrap();
+        let list = s.todos().unwrap();
+        assert_eq!(list.iter().map(|(t, _)| t.message_id.as_str()).collect::<Vec<_>>(), vec!["1", "2"]);
+        assert_eq!((list[1].0.priority, list[1].0.project.as_str(), list[1].0.done_at), (1, "Thesis", Some(400)));
+        s.remove_todo("a", "c", "1").unwrap();
+        assert_eq!(s.todos().unwrap().len(), 1);
+        // Your own, about no message: listed with the others, newest open first.
+        s.add_own_todo("own1", " Book the room ", "Admin", 500).unwrap();
+        let list = s.todos().unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list[0].1.is_none());
+        assert_eq!((list[0].0.text.as_str(), list[0].0.project.as_str(), list[0].0.account_id.as_str()), ("Book the room", "Admin", ""));
     }
 
     #[test]

@@ -123,6 +123,10 @@ pub trait Service: Send + Sync {
         Err(ServiceError::Unsupported)
     }
 
+    /// People from the archive whose names a message about to be sent mentions, for connectors
+    /// that tag people by id rather than by name.
+    fn know_people(&self, _users: &[User]) {}
+
     /// Adds or removes a favorite on the service. `Unsupported` keeps the star local.
     async fn set_starred(&self, _channel_id: &str, _starred: bool) -> SResult<()> {
         Err(ServiceError::Unsupported)

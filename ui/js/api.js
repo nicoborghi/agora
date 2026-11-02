@@ -45,6 +45,7 @@ const PATHS = {
   bellOff: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/><path d="M2.6 2.4 13.4 13.6"/>',
   image: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M14 11l-3.5-3.5L4 13"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  todo: '<rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.3 8.1l1.9 1.9 3.6-4"/>',
   // Same weight as home/grid: a plain ring with eight short, rounded teeth and a hub.
   gear: '<circle cx="8" cy="8" r="4.1"/><circle cx="8" cy="8" r="1.6"/><path d="M8 1.9v1.6M8 12.5v1.6M1.9 8h1.6M12.5 8h1.6M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M3.7 12.3l1.1-1.1M11.2 4.8l1.1-1.1" stroke-width="2"/>',
   home: '<path d="M2.5 7.3L8 2.8l5.5 4.5"/><path d="M4 6.2V13.2h3V10h2v3.2h3V6.2"/>',

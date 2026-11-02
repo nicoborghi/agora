@@ -275,6 +275,16 @@ impl MattermostService {
                 if server_mentions.as_array().is_some_and(|a| a.iter().any(|u| u.as_str() == Some(me.as_str())))
                     && !m.mentions.contains(&me)
                 {
+                    m.mentions.push(me.clone());
+                }
+                // A reply in a thread we follow (started, replied in or followed) is for us, even
+                // when the archive holds none of the thread to tell.
+                let followers = embedded(&data["followers"]);
+                if m.thread_root.is_some()
+                    && m.author_id != me
+                    && followers.as_array().is_some_and(|a| a.iter().any(|u| u.as_str() == Some(me.as_str())))
+                    && !m.mentions.contains(&me)
+                {
                     m.mentions.push(me);
                 }
                 vec![ServiceEvent::MessageUpsert(m)]

@@ -56,6 +56,13 @@ pub struct MessageView {
     pub reply_to: Option<RootPreview>,
 }
 
+/// A to-do and the message it is about (none for your own).
+#[derive(Debug, Clone, Serialize)]
+pub struct TodoView {
+    pub todo: Todo,
+    pub message: Option<MessageView>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ChannelDetailsView {
     pub purpose: String,
@@ -1015,6 +1022,50 @@ impl Engine {
         .map(|views| self.with_reactors(views))
     }
 
+    /// The to-do list is local to Agora (the archive), across every account.
+    pub fn add_todo(&self, acc: &str, ch: &str, id: &str) -> Result<(), String> {
+        self.store.add_todo(acc, ch, id, now_ms()).map_err(err)
+    }
+
+    pub fn remove_todo(&self, acc: &str, ch: &str, id: &str) -> Result<(), String> {
+        self.store.remove_todo(acc, ch, id).map_err(err)
+    }
+
+    /// Saves a to-do; `done` keeps the first time it was marked done.
+    pub fn update_todo(&self, mut t: Todo, done: bool) -> Result<Todo, String> {
+        t.done_at = done.then(|| t.done_at.unwrap_or_else(now_ms));
+        t.project = t.project.trim().to_string();
+        self.store.update_todo(&t).map_err(err)?;
+        Ok(t)
+    }
+
+    /// A to-do of your own, about no message.
+    pub fn add_own_todo(&self, text: &str, project: &str) -> Result<Todo, String> {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let now = now_ms();
+        let id = format!("own-{now}-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        self.store.add_own_todo(&id, text, project, now).map_err(err)?;
+        Ok(Todo { message_id: id, created_at: now, text: text.trim().to_string(), project: project.trim().to_string(), ..Todo::default() })
+    }
+
+    /// Every to-do with its message (none for your own), open ones first.
+    pub fn todos(&self) -> Result<Vec<TodoView>, String> {
+        let mut self_ids: HashMap<String, Option<String>> = HashMap::new();
+        let mut todos = Vec::new();
+        let mut views = Vec::new();
+        for (t, a) in self.store.todos().map_err(err)? {
+            if let Some(a) = a {
+                let me = self_ids.entry(a.message.account_id.clone()).or_insert_with(|| self.self_id(&a.message.account_id));
+                views.push(MessageView::new(a, me.as_deref()));
+                todos.push((t, true));
+            } else {
+                todos.push((t, false));
+            }
+        }
+        let mut views = self.with_reactors(views).into_iter();
+        Ok(todos.into_iter().map(|(todo, about)| TodoView { todo, message: if about { views.next() } else { None } }).collect())
+    }
+
     pub async fn thread(&self, acc: &str, ch: &str, root: &str) -> Result<Vec<MessageView>, String> {
         if let Some(svc) = self.service(acc) {
             match svc.thread(ch, root).await {
@@ -1118,13 +1169,29 @@ impl Engine {
         broadcast: bool,
     ) -> Result<MessageView, String> {
         let svc = self.connected(acc)?;
+        self.hint_people(acc, &*svc, text);
         let m = svc.send(ch, text, thread_root, broadcast).await.map_err(err)?;
         self.ingest(acc, m.clone(), false).map_err(err)?;
         self.message_view(m).map_err(err)
     }
 
+    /// Hands the connector the people `@Name` in `text` may be, looked up by first word.
+    fn hint_people(&self, acc: &str, svc: &dyn Service, text: &str) {
+        let mut people = Vec::new();
+        for part in text.split('@').skip(1) {
+            let first: String = part.chars().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-')).collect();
+            if !first.is_empty() {
+                people.extend(self.store.find_users(acc, &first, 20).unwrap_or_default());
+            }
+        }
+        if !people.is_empty() {
+            svc.know_people(&people);
+        }
+    }
+
     pub async fn edit(&self, acc: &str, ch: &str, id: &str, text: &str) -> Result<(), String> {
         let svc = self.connected(acc)?;
+        self.hint_people(acc, &*svc, text);
         svc.edit(ch, id, text).await.map_err(err)?;
         if let Some(mut m) = self.store.get_message(acc, ch, id).map_err(err)? {
             m.text = text.to_string();

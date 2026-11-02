@@ -2,8 +2,8 @@
 //! they run on the Tokio runtime and never block the window thread.
 
 use crate::{login, popup, tray, AppState};
-use agora_core::engine::{ChannelDetailsView, ChannelView, HomeItem, MembersView, MessageView, PopupNote, ProfileView, SelfView};
-use agora_core::model::{Account, AccountId, Canvas, ConnState, Millis, Presence, ServiceKind, User};
+use agora_core::engine::{ChannelDetailsView, ChannelView, HomeItem, MembersView, MessageView, PopupNote, ProfileView, SelfView, TodoView};
+use agora_core::model::{Account, AccountId, Canvas, ConnState, Millis, Presence, ServiceKind, Todo, User};
 use agora_core::settings::{ChannelPrefs, Settings};
 use agora_core::{secrets, store::Store};
 use serde::Serialize;
@@ -247,6 +247,31 @@ pub async fn set_bookmark(
     on: bool,
 ) -> CmdResult<()> {
     state.engine.set_bookmark(&account_id, &channel_id, &message_id, on)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_todos(state: State<'_, AppState>) -> CmdResult<Vec<TodoView>> {
+    state.engine.todos()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn add_todo(state: State<'_, AppState>, account_id: String, channel_id: String, message_id: String) -> CmdResult<()> {
+    state.engine.add_todo(&account_id, &channel_id, &message_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn add_own_todo(state: State<'_, AppState>, text: String, project: String) -> CmdResult<Todo> {
+    state.engine.add_own_todo(&text, &project)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn remove_todo(state: State<'_, AppState>, account_id: String, channel_id: String, message_id: String) -> CmdResult<()> {
+    state.engine.remove_todo(&account_id, &channel_id, &message_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_todo(state: State<'_, AppState>, todo: Todo, done: bool) -> CmdResult<Todo> {
+    state.engine.update_todo(todo, done)
 }
 
 #[tauri::command(rename_all = "snake_case")]

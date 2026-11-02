@@ -36,6 +36,8 @@ export const S = {
   stick: true, // the message list follows the bottom
   bookmarks: new Set(), // bkey() of bookmarked messages
   bookmarkList: [], // the bookmarked messages, newest bookmark first
+  todos: [], // the to-do list: { todo, message }, open ones first
+  todoView: null, // { show: 'open' | 'done' | 'all', project: null | '' | name, sort: 'priority' | 'newest' | 'due' }
   drafts: {}, // key(a, c) -> unsent text
   update: { available: null, checking: false, checked: false, error: '' }, // self-update state
 };
@@ -47,7 +49,9 @@ const enabledAccounts = () => S.accounts.filter((a) => a.enabled);
 const isDirect = (c) => c.kind === 'dm' || c.kind === 'group';
 const isOpen = (a, c) => S.open && S.open.a === a && S.open.c === c;
 // The workspace selected in the left bar, or null for Home and All.
-const railAccount = () => (['all', 'home', 'bookmarks'].includes(S.rail) ? null : S.rail);
+const railAccount = () => (['all', 'home', 'bookmarks', 'todo'].includes(S.rail) ? null : S.rail);
+// Pages of their own, across every workspace: they replace the conversation list.
+const isPage = (id) => id === 'home' || id === 'bookmarks' || id === 'todo';
 const KIND_NAMES = { slack: 'Slack', mattermost: 'Mattermost', rocketchat: 'Rocket.Chat', demo: 'Demo' };
 export const kindName = (k) => KIND_NAMES[k] || k;
 
@@ -87,6 +91,7 @@ async function init() {
   await listen('agora', onEvent);
   S.drafts = load('drafts') || {};
   loadBookmarks();
+  loadTodos();
   // After an update, once: what changed since the version used before.
   // Versions before 0.3.0 did not record it: someone with workspaces is updating, not new.
   const seen = load('seen-version') || (S.accounts.length ? CHANGES.find((c) => compareVersions(c.version, S.settings.version) < 0)?.version : null);
@@ -321,6 +326,9 @@ RENDER.rail = function renderRail() {
   });
   // Bookmarks span every workspace, so they sit below them.
   html += `<div class="rail-sep"></div><div class="rail-item all bookmarks ${on('bookmarks')}" data-id="bookmarks" title="Bookmarks">${icon('bookmark')}</div>`;
+  const open = openTodos();
+  html += `<div class="rail-item all todo ${on('todo')}" data-id="todo" title="To-do${open ? ` - ${open} open` : ''}">${icon('todo')}
+    ${open ? `<span class="count">${open > 99 ? '99+' : open}</span>` : ''}</div>`;
   html += `<div class="rail-spacer"></div><div class="rail-item gear ${inSettings ? 'active' : ''}" data-act="settings"
     title="${inSettings ? 'Close settings (Esc)' : 'Settings (Ctrl+,)'}">${icon('gear')}</div>`;
   $('#rail').innerHTML = html;
@@ -401,7 +409,9 @@ function selectRail(id) {
   if (id !== S.rail && S.panel) { S.panel = null; schedule('panel', 'header'); }
   S.rail = id;
   save('rail', id);
-  if (id === 'home' || id === 'bookmarks') closeChannel();
+  if (isPage(id)) closeChannel();
+  // Messages may have changed since the list was loaded.
+  if (id === 'todo') loadTodos();
   // A workspace never shows another one's chat: reopen its last conversation, else its newest.
   if (railAccount() && S.open?.a !== id) {
     const mine = [...S.channels.values()].filter((c) => c.account_id === id);
@@ -723,13 +733,13 @@ const plain = (md, max = 140) => {
 
 let homeTimer = 0;
 RENDER.home = function renderHome() {
-  const show = (S.rail === 'home' || S.rail === 'bookmarks') && !S.open;
-  // Home and Bookmarks are pages of their own: they replace the conversation list.
+  const show = isPage(S.rail) && !S.open;
   document.body.classList.toggle('home-mode', show);
   $('#home').hidden = !show;
   if (!S.open) $('#empty').hidden = show;
   if (!show) return;
   if (S.rail === 'bookmarks') { renderBookmarks(); return; }
+  if (S.rail === 'todo') { renderTodos(); return; }
   // Bursts of events (catch-up after connecting): at most one reload every 600 ms.
   if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = 0; loadHome(); }, 600);
 };
@@ -830,6 +840,269 @@ function renderBookmarks() {
       <p class="muted">${list.length ? `${list.length} saved ${list.length === 1 ? 'message' : 'messages'}, kept in Agora only.`
         : 'Bookmark a message with its bookmark button to find it here, whatever the workspace.'}</p></div>
     <div class="bm-list">${items}</div>`;
+}
+
+// ------------------------------------------------------------ to-do list
+
+const PRIORITIES = [[1, 'High'], [2, 'Medium'], [3, 'Low']];
+// Same form as bkey() of the message it is about; your own have an empty account and conversation.
+const tkey = (t) => `${t.todo.account_id}\u0001${t.todo.channel_id}\u0001${t.todo.message_id}`;
+const todoOf = (m) => S.todos.find((t) => tkey(t) === bkey(m));
+const openTodos = () => S.todos.filter((t) => !t.todo.done_at).length;
+// Cards whose whole message is shown, and cards with the note field opened (bkey of the message).
+const todoExpanded = new Set();
+const todoNoting = new Set();
+const todoView = () => (S.todoView ??= { show: 'open', project: null, sort: 'priority', ...(load('todoView') || {}) });
+
+async function loadTodos() {
+  try {
+    S.todos = await invoke('get_todos');
+  } catch (e) {
+    S.todos = [];
+  }
+  schedule('messages', 'rail', 'home');
+}
+
+/** From a message's hover bar: onto the list, or to the list when it is already there. */
+async function addTodo(m) {
+  if (todoOf(m)) { selectRail('todo'); return; }
+  try {
+    await invoke('add_todo', { account_id: m.account_id, channel_id: m.channel_id, message_id: m.id });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  const todo = { account_id: m.account_id, channel_id: m.channel_id, message_id: m.id, created_at: Date.now(),
+    priority: 0, project: '', note: '', due: null, done_at: null };
+  S.todos.unshift({ todo, message: m });
+  toast('Added to your to-do list');
+  schedule('messages', 'rail', 'home');
+}
+
+/** A to-do of your own, typed on the page; it joins the project being shown. */
+async function addOwnTodo(input) {
+  const text = input.value.trim();
+  if (!text) return;
+  const v = todoView();
+  try {
+    const todo = await invoke('add_own_todo', { text, project: v.project || '' });
+    S.todos.unshift({ todo, message: null });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  input.value = '';
+  if (v.show === 'done') setTodoView({ show: 'open' });
+  schedule('rail', 'home');
+}
+
+/** Saves `changes` (priority, project, note, due, done, text) for one to-do. */
+async function updateTodo(t, changes) {
+  const { done = !!t.todo.done_at, ...fields } = changes;
+  try {
+    t.todo = await invoke('update_todo', { todo: { ...t.todo, ...fields }, done });
+  } catch (e) {
+    toast(String(e));
+  }
+  schedule('rail', 'home');
+}
+
+async function removeTodo(t) {
+  try {
+    await invoke('remove_todo', { account_id: t.todo.account_id, channel_id: t.todo.channel_id, message_id: t.todo.message_id });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  S.todos = S.todos.filter((x) => x !== t);
+  schedule('messages', 'rail', 'home');
+}
+
+/** Due dates are whole days: local midnight, shown and typed as YYYY-MM-DD. */
+const dayStart = (ms = Date.now()) => { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+const dayInput = (ms) => { if (!ms) return ''; const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const dayFromInput = (v) => { const [y, m, d] = v.split('-').map(Number); return y ? new Date(y, m - 1, d).getTime() : null; };
+const shortDay = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short', year: new Date(ms).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+
+/** How long until a due day, in words, with how urgent it looks. */
+function daysLeft(due, today) {
+  const n = Math.round((due - today) / 86400000);
+  if (n < 0) return { cls: 'late', text: `${-n} ${-n === 1 ? 'day' : 'days'} late` };
+  if (n === 0) return { cls: 'late', text: 'Due today' };
+  if (n === 1) return { cls: 'soon', text: 'Tomorrow' };
+  return { cls: n <= 3 ? 'soon' : '', text: `${n} days left` };
+}
+
+/** The priority picker: one row per level, each with its coloured flag. */
+function showPriorityMenu(anchor, t) {
+  const row = (p, label) => `<button class="prio-opt p${p} ${t.todo.priority === p ? 'on' : ''}" data-p="${p}">${icon('flag')}${label}</button>`;
+  showPopover(anchor, `<div class="menu prio-menu">${PRIORITIES.map(([p, label]) => row(p, label)).join('')}${row(0, 'No priority')}</div>`, (pop) => {
+    // Under the pill, from its left edge (popovers open leftwards by default).
+    pop.style.left = `${Math.max(8, Math.min(anchor.getBoundingClientRect().left, window.innerWidth - pop.offsetWidth - 8))}px`;
+    pop.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-p]');
+      if (!b) return;
+      closePopover();
+      updateTodo(t, { priority: +b.dataset.p });
+    });
+  });
+}
+
+function sortTodos(list, sort) {
+  const prio = (t) => t.todo.priority || 9;
+  const due = (t) => t.todo.due ?? Infinity;
+  const by = {
+    priority: (a, b) => prio(a) - prio(b) || due(a) - due(b) || b.todo.created_at - a.todo.created_at,
+    due: (a, b) => due(a) - due(b) || prio(a) - prio(b) || b.todo.created_at - a.todo.created_at,
+    newest: (a, b) => b.todo.created_at - a.todo.created_at,
+  }[sort] || (() => 0);
+  // Open first in the chosen order; done ones after, most recently done first.
+  return [...list].sort((a, b) => !!a.todo.done_at - !!b.todo.done_at
+    || (a.todo.done_at ? b.todo.done_at - a.todo.done_at : by(a, b)));
+}
+
+/** The to-do list: filters by state and project, then one card per message. */
+function renderTodos() {
+  const v = todoView();
+  const all = S.todos;
+  const open = openTodos();
+  const projects = [...new Set(all.map((t) => t.todo.project).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (v.project && !projects.includes(v.project)) v.project = null;
+  const inProject = (t) => v.project === null || t.todo.project === v.project;
+  const shown = sortTodos(all.filter((t) => inProject(t)
+    && (v.show === 'all' || (v.show === 'done') === !!t.todo.done_at)), v.sort);
+  const openIn = (p) => all.filter((t) => !t.todo.done_at && t.todo.project === p).length;
+  const today = dayStart();
+
+  const seg = (val, label) => `<button class="${v.show === val ? 'on' : ''}" data-todo-show="${val}">${label}</button>`;
+  const projChip = (p, label, n) => `<button class="todo-proj ${v.project === p ? 'on' : ''}" data-todo-project="${esc(p ?? '\u0000')}">${esc(label)}${n ? `<span>${n}</span>` : ''}</button>`;
+  const bar = all.length ? `<div class="todo-bar">
+      <div class="seg big">${seg('open', `Open${open ? ` <span>${open}</span>` : ''}`)}${seg('done', 'Done')}${seg('all', 'All')}</div>
+      <div class="todo-projs">${projChip(null, 'All projects', 0)}${projects.map((p) => projChip(p, p, openIn(p))).join('')}
+        ${projects.length && all.some((t) => !t.todo.project) ? projChip('', 'No project', openIn('')) : ''}</div>
+      <label class="todo-sort muted">Sort <select data-todo-sort>
+        ${[['priority', 'Priority'], ['due', 'Due date'], ['newest', 'Newest']].map(([k, l]) => `<option value="${k}" ${v.sort === k ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label></div>` : '';
+
+  const items = shown.map((t) => {
+    const { todo, message: m } = t;
+    const k = tkey(t);
+    const prioName = PRIORITIES.find(([p]) => p === todo.priority)?.[1];
+    const left = todo.due && !todo.done_at ? daysLeft(todo.due, today) : null;
+    const when = `<time title="${todo.done_at ? 'Done' : 'Added'} ${esc(new Date(todo.done_at || todo.created_at).toLocaleString())}">${todo.done_at ? `done ${esc(shortDay(todo.done_at))}` : `added ${esc(shortDay(todo.created_at))}`}</time>`;
+    let about;
+    if (m) {
+      const ch = S.channels.get(key(m.account_id, m.channel_id));
+      const acc = account(m.account_id);
+      const files = m.attachments?.length ? `<span class="todo-files">${icon('clip')}${m.attachments.length}</span>` : '';
+      about = `<div class="todo-where"><span class="chan">${serviceMark(acc)}${ch ? `${glyph(ch)}${esc(ch.display_name)}` : 'Conversation not in your sidebar'}</span>
+          <span>${esc(acc?.name || '')}</span>${when}
+          ${ch ? `<button class="todo-go" data-act="todo-open">Open in chat${icon('chevron')}</button>` : ''}</div>
+        <div class="todo-text ${todoExpanded.has(k) ? 'open' : ''}" title="Click to show all"><b>${esc(m.author_name)}</b> ${files}${namedChannelRefs(renderMarkdown(m.text, m.account_id), m.account_id)}</div>`;
+    } else {
+      about = `<div class="todo-where"><span class="chan">${icon('person')}Your own to-do</span>${when}</div>
+        <input type="text" class="todo-own" data-field="text" value="${esc(todo.text)}" placeholder="What to do" spellcheck="true">`;
+    }
+    return `<article class="todo-item ${todo.done_at ? 'done' : ''}" data-a="${esc(todo.account_id)}" data-c="${esc(todo.channel_id)}" data-id="${esc(todo.message_id)}">
+      <button class="todo-check" data-act="todo-done" title="${todo.done_at ? 'Mark not done' : 'Mark done'}">${icon('todo')}</button>
+      <div class="todo-main">
+        <div class="todo-top">
+          <button class="todo-prio p${todo.priority}" data-act="todo-prio" title="Set the priority">${icon('flag')}${prioName || 'Priority'}</button>
+          <label class="todo-due ${todo.due ? `set ${left?.cls || ''}` : ''}" title="${todo.due ? 'Change the due date' : 'Set a due date'}">${icon('clock')}${todo.due
+            ? `<span class="due-day">${esc(shortDay(todo.due))}</span>${left ? `<span>${esc(left.text)}</span>` : ''}` : 'Due date'}
+            <input type="date" data-field="due" value="${dayInput(todo.due)}" tabindex="-1"></label>
+          <label class="todo-project ${todo.project ? 'set' : ''}" title="Project">${icon('folder')}<input type="text" data-field="project"
+            list="todo-projects" placeholder="Project" value="${esc(todo.project)}" spellcheck="false"></label>
+          <span class="todo-acts">
+            <button class="icon-btn ${todo.note ? 'on' : ''}" data-act="todo-note" title="Note">${icon('edit')}</button>
+            <button class="icon-btn" data-act="todo-remove" title="Remove from the list">${icon('trash')}</button></span>
+        </div>
+        ${about}
+        ${todo.note || todoNoting.has(k) ? `<input type="text" class="todo-note" data-field="note" placeholder="Add a note..." value="${esc(todo.note)}">` : ''}
+      </div>
+    </article>`;
+  }).join('');
+
+  const counts = all.length ? `${open} open, ${all.length - open} done. Kept in Agora only.`
+    : 'Type a to-do below, or add a message with the to-do button in its hover bar. Then give it a priority, a due date and a project, and tick it off when it is done.';
+  const composer = `<form class="todo-new">${icon('plus')}<input type="text" data-new-todo
+      placeholder="Add a to-do${v.project ? ` to ${esc(v.project)}` : ''}... (Enter)" spellcheck="true"><button class="btn primary">Add</button></form>`;
+  const empty = all.length && !shown.length
+    ? `<p class="muted todo-empty">${v.show === 'open' ? 'Nothing open here. Well done.' : 'Nothing here.'}</p>` : '';
+  // Saves and incoming events redraw the page: keep the field being typed in, with its text.
+  const focused = document.activeElement?.closest?.('#home .todo-item [data-field], #home [data-new-todo]');
+  const refocus = focused && { id: focused.closest('.todo-item')?.dataset.id, field: focused.dataset.field,
+    value: focused.value, at: focused.type === 'text' ? focused.selectionStart : null };
+  $('#home').innerHTML = `<div class="home-head"><h1>To-do</h1><p class="muted">${counts}</p></div>${bar}${composer}
+    <datalist id="todo-projects">${projects.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
+    <div class="bm-list todo-list">${items}${empty}</div>`;
+  if (refocus) {
+    const item = [...$('#home').querySelectorAll('.todo-item')].find((x) => x.dataset.id === refocus.id);
+    const field = refocus.field ? item?.querySelector(`[data-field="${refocus.field}"]`) : $('#home [data-new-todo]');
+    if (field) {
+      field.value = refocus.value;
+      field.focus();
+      if (refocus.at !== null) field.setSelectionRange(refocus.at, refocus.at);
+    }
+  }
+}
+
+function setTodoView(changes) {
+  Object.assign(todoView(), changes);
+  save('todoView', S.todoView);
+  schedule('home');
+}
+
+/** Clicks on the to-do page; false when the click was not for it. */
+function onTodoClick(e) {
+  const show = e.target.closest('[data-todo-show]');
+  if (show) { setTodoView({ show: show.dataset.todoShow }); return true; }
+  const proj = e.target.closest('[data-todo-project]');
+  if (proj) { const p = proj.dataset.todoProject; setTodoView({ project: p === '\u0000' ? null : p }); return true; }
+  const t = todoAt(e.target);
+  if (!t) return false;
+  const k = tkey(t);
+  if (e.target.closest('[data-act="todo-done"]')) { updateTodo(t, { done: !t.todo.done_at }); return true; }
+  const prio = e.target.closest('[data-act="todo-prio"]');
+  if (prio) { showPriorityMenu(prio, t); return true; }
+  // The date field is hidden under the label: open the system's date picker.
+  const due = e.target.closest('.todo-due');
+  if (due) { e.preventDefault(); try { due.querySelector('input').showPicker(); } catch { /* picker unavailable */ } return true; }
+  if (e.target.closest('[data-act="todo-note"]')) {
+    todoNoting.add(k);
+    renderTodos();
+    [...$('#home').querySelectorAll('.todo-item')].find((x) => todoAt(x) === t)?.querySelector('.todo-note')?.focus();
+    return true;
+  }
+  if (e.target.closest('[data-act="todo-remove"]')) { removeTodo(t); return true; }
+  if (e.target.closest('[data-act="todo-open"]')) { jumpTo(t.message.account_id, t.message.channel_id, t.message.id, t.message); return true; }
+  const link = e.target.closest('a[data-url]');
+  if (link) { e.preventDefault(); invoke('open_url', { url: link.dataset.url }).catch((x) => toast(String(x))); return true; }
+  // The message shows two lines; a click shows all of it (and back), unless text is being selected.
+  const text = e.target.closest('.todo-text');
+  if (text && !String(getSelection())) {
+    if (todoExpanded.has(k)) todoExpanded.delete(k); else todoExpanded.add(k);
+    text.classList.toggle('open', todoExpanded.has(k));
+  }
+  return true;
+}
+
+const todoAt = (el) => {
+  const item = el.closest('.todo-item');
+  return item && S.todos.find((t) => t.todo.account_id === item.dataset.a && t.todo.channel_id === item.dataset.c && t.todo.message_id === item.dataset.id);
+};
+
+/** Project, note, due date and your own text are saved when the field is left (or Enter is pressed). */
+function onTodoChange(e) {
+  if (e.target.matches('[data-todo-sort]')) { setTodoView({ sort: e.target.value }); return; }
+  const field = e.target.dataset.field;
+  const t = field && todoAt(e.target);
+  if (!t) return;
+  const value = field === 'due' ? dayFromInput(e.target.value) : e.target.value;
+  // A to-do of your own always says something.
+  if (field === 'text' && !value.trim()) { e.target.value = t.todo.text; return; }
+  if (field === 'note' && !value) todoNoting.delete(tkey(t));
+  if ((t.todo[field] ?? null) !== (value ?? null)) updateTodo(t, { [field]: value });
 }
 
 async function loadHome() {
@@ -1073,6 +1346,7 @@ function toolsHtml(m, inThread) {
     ${topEmoji(4).map((n) => `<button class="icon-btn quick" data-act="quick-react" data-emoji="${esc(n)}" title=":${esc(n)}:">${EMOJI[n]}</button>`).join('')}
     <button class="icon-btn" data-act="react" title="Add reaction">${icon('smile')}</button>
     <button class="icon-btn ${marked ? 'on' : ''}" data-act="bookmark" title="${marked ? 'Remove bookmark' : 'Bookmark'}">${icon('bookmark')}</button>
+    <button class="icon-btn ${todoOf(m) ? 'on' : ''}" data-act="todo" title="${todoOf(m) ? 'In your to-do list: open it' : 'Add to to-do list'}">${icon('todo')}</button>
     ${inThread ? '' : `<button class="icon-btn" data-act="thread" title="Reply in thread">${icon('reply')}</button>`}
     <button class="icon-btn" data-act="msg-more" title="More: copy link, mark unread">${icon('more')}</button>
     ${m.is_self ? `<button class="icon-btn" data-act="edit" title="Edit">${icon('edit')}</button>
@@ -1414,7 +1688,8 @@ async function updateAutocomplete(input, accountId) {
     const users = accountId ? await invoke('find_users', { account_id: accountId, query: q }).catch(() => []) : [];
     items = users.map((u) => ({
       html: `${avatarHtml(u, u.display_name || u.name, undefined, 'xs')}<b>${esc(u.display_name || u.name)}</b><span class="muted">@${esc(u.name)}</span>`,
-      insert: `@${u.name} `,
+      // A no-break space keeps a multi-word name one mention ("@Ada Lovelace").
+      insert: `@${u.name.replace(/ /g, ' ')} `,
     }));
     items.push(...['here', 'channel', 'all'].filter((w) => w.startsWith(q) && q.length > 0)
       .map((w) => ({ html: `<b>@${w}</b><span class="muted">notify ${w === 'here' ? 'everyone online' : 'everyone'}</span>`, insert: `@${w} ` })));
@@ -1998,7 +2273,7 @@ function mentionPerson(p) {
   if (!S.open || S.open.a !== p.account_id || $('#composer').hidden) { toast('Open a conversation of this workspace first'); return; }
   const at = input.selectionStart ?? input.value.length;
   const before = input.value.slice(0, at);
-  const ins = `${before && !/\s$/.test(before) ? ' ' : ''}@${p.name} `;
+  const ins = `${before && !/\s$/.test(before) ? ' ' : ''}@${p.name.replace(/ /g, ' ')} `;
   input.value = before + ins + input.value.slice(at);
   input.focus();
   input.selectionStart = input.selectionEnd = at + ins.length;
@@ -2787,6 +3062,7 @@ function onMessageAreaClick(e, inPanel) {
   switch (btn.dataset.act) {
     case 'react': showReactionPicker(btn, m); break;
     case 'bookmark': toggleBookmark(m); break;
+    case 'todo': addTodo(m); break;
     case 'toggle-reaction': toggleReaction(m, btn.dataset.emoji); break;
     case 'quick-react': useEmoji(btn.dataset.emoji); toggleReaction(m, btn.dataset.emoji); break;
     case 'code-more':
@@ -2920,7 +3196,17 @@ function bindUi() {
     list.querySelectorAll('.drop-target, .dragging').forEach((x) => x.classList.remove('drop-target', 'dragging'));
   });
 
+  $('#home').addEventListener('change', (e) => { if (S.rail === 'todo') onTodoChange(e); });
+  $('#home').addEventListener('submit', (e) => {
+    if (!e.target.matches('.todo-new')) return;
+    e.preventDefault();
+    addOwnTodo(e.target.querySelector('input'));
+  });
+  $('#home').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('.todo-item input[type="text"]')) e.target.blur();
+  });
   $('#home').addEventListener('click', (e) => {
+    if (S.rail === 'todo' && onTodoClick(e)) return;
     const bm = e.target.closest('.bm-item');
     if (bm) {
       const m = S.bookmarkList.find((x) => x.account_id === bm.dataset.a && x.channel_id === bm.dataset.c && x.id === bm.dataset.id);

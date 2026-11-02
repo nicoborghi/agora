@@ -68,8 +68,37 @@ const ALIAS = { py: 'python', python3: 'python', javascript: 'js', ts: 'js', typ
 const COMMENT = { python: '#', bash: '#', sql: '--', js: '//', rust: '//', c: '//', json: null };
 const kwSets = {};
 
+// Clues for blocks sent without a language (Slack never sends one): [pattern, weight].
+const SIGNS = {
+  python: [[/^\s*(async\s+)?(def|class)\s+\w+.*:\s*$/m, 3], [/^\s*(import\s+\w|from\s+[\w.]+\s+import\s)/m, 3],
+    [/^\s*(if|elif|else|for|while|with|try|except|finally)\b[^\n]*:\s*$/m, 2], [/\bself\.\w/, 2],
+    [/\b(print|len|range|np\.\w+|plt\.\w+)\(/, 1], [/\b(None|True|False)\b/, 1], [/^\s*\w+(\[[^\]\n]*\]|\.\w+)*\s*=\s*[\w"'[({-]/m, 1]],
+  js: [[/\b(const|let|var)\s+\w+\s*=/, 3], [/=>/, 2], [/\bfunction\b\s*\w*\s*\(/, 3], [/\bconsole\.\w+\(/, 3],
+    [/^\s*import\s.+\sfrom\s+['"]/m, 3], [/;\s*$/m, 1]],
+  rust: [[/\bfn\s+\w+\s*[<(]/, 3], [/\blet\s+(mut\s+)?\w+\s*[:=]/, 2], [/\w::\w/, 1], [/\)\s*->\s*\w/, 2], [/\b\w+!\(/, 2],
+    [/^\s*#\[/m, 3], [/\bimpl\b/, 2]],
+  c: [[/^\s*#include\s*[<"]/m, 4], [/\b(int|void|char|double|float)\s+\*?\w+\s*\(/, 2], [/\bstd::/, 3], [/\bprintf\(/, 2], [/;\s*$/m, 1]],
+  bash: [[/^#!.*\b(ba|z)?sh\b/m, 4], [/^\s*\$ \S/m, 3],
+    [/^\s*(sudo|cd|ls|git|pip3?|conda|export|echo|ssh|scp|rsync|npm|cargo|module|source|chmod|mkdir|rm|cp|mv|srun|sbatch|squeue|wget|curl|tar|make)\s/m, 3],
+    [/\s--?[a-z][\w-]*/, 1], [/\|\s*(grep|awk|sed|head|tail|sort|wc)\b/, 2]],
+  sql: [[/\bselect\b[\s\S]+\bfrom\b/i, 3], [/\b(insert\s+into|create\s+table|update\s+\w+\s+set|delete\s+from)\b/i, 3]],
+};
+
+/** The language a block without one looks like, or null for plain text (logs, output, prose). */
+export function guessLang(code) {
+  const t = code.trim();
+  if (/^[[{]/.test(t)) { try { JSON.parse(t); return 'json'; } catch { /* not JSON */ } }
+  let best = null;
+  let top = 0;
+  for (const [lang, signs] of Object.entries(SIGNS)) {
+    const score = signs.reduce((s, [re, w]) => s + (re.test(code) ? w : 0), 0);
+    if (score > top) { best = lang; top = score; }
+  }
+  return top >= 3 ? best : null;
+}
+
 export function highlight(code, lang) {
-  lang = (lang || 'python').toLowerCase();
+  lang = (lang || guessLang(code) || '').toLowerCase();
   lang = ALIAS[lang] || lang;
   if (!KW[lang]) return esc(code);
   const kws = kwSets[lang] || (kwSets[lang] = new Set(KW[lang].split(' ')));

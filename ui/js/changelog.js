@@ -3,6 +3,16 @@
 
 export const CHANGES = [
   {
+    version: '0.4.0',
+    items: [
+      ['To-do list', 'Put any message on your to-do list from its hover bar, or type your own. Give it a priority, a due date with the days left, a project and a note, and tick it off when done. The left bar shows how many are open.'],
+      ['Mentions with full names', 'Picking someone whose name has a space now tags them on Slack, and the whole name shows as one mention.'],
+      ['Mattermost thread replies notify', 'Replies in threads you follow now reach you, even for threads Agora had not seen before.'],
+      ['Rocket.Chat initials', 'People without a picture show the initials of their full name instead of one letter of their username.'],
+      ['Code blocks', 'Code sent without a language is coloured only when it looks like code; logs and plain text stay plain.'],
+    ],
+  },
+  {
     version: '0.3.0',
     items: [
       ['PDFs inside Agora', 'PDFs show their first page in the conversation and open in Agora with zoom and a map of the pages. Other files open in your usual app. No more web login.'],
