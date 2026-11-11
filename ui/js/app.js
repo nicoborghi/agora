@@ -6,7 +6,8 @@ import { renderMarkdown, emoji, EMOJI, COMMON_EMOJI, QUICK_REACTIONS, extractUrl
 import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
 import { CHANGES, compareVersions } from './changelog.js';
-import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged } from './settings.js';
+import { galleryItems, openGallery, itemDate } from './gallery.js';
+import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged, fmtBytes } from './settings.js';
 
 const PAGE = 50;
 const MAX_LOADED = 400;
@@ -220,6 +221,8 @@ function onEvent(ev) {
       break;
     case 'history':
       if (isOpen(ev.account_id, ev.channel_id)) reloadOpen();
+      // Catch-up asked for it: what was downloaded joins the lists.
+      if (S.rail === 'home' && !S.open && homeTab() === 'catchup') schedule('home');
       break;
     case 'typing': {
       const k = key(ev.account_id, ev.channel_id);
@@ -329,7 +332,10 @@ RENDER.rail = function renderRail() {
   const open = openTodos();
   html += `<div class="rail-item all todo ${on('todo')}" data-id="todo" title="To-do${open ? ` - ${open} open` : ''}">${icon('todo')}
     ${open ? `<span class="count">${open > 99 ? '99+' : open}</span>` : ''}</div>`;
-  html += `<div class="rail-spacer"></div><div class="rail-item gear ${inSettings ? 'active' : ''}" data-act="settings"
+  const focus = !!S.settings?.notifications?.focus;
+  html += `<div class="rail-spacer"></div><div class="rail-item gear focus ${focus ? 'on' : ''}" data-act="focus"
+    title="${focus ? 'Focus mode is on: no notifications. Click to turn it off' : 'Focus mode: turn off all notifications'}">${icon(focus ? 'bellOff' : 'bell')}</div>`;
+  html += `<div class="rail-item gear ${inSettings ? 'active' : ''}" data-act="settings"
     title="${inSettings ? 'Close settings (Esc)' : 'Settings (Ctrl+,)'}">${icon('gear')}</div>`;
   $('#rail').innerHTML = html;
 };
@@ -676,7 +682,7 @@ async function openChannel(a, c) {
   if (!ch) return;
   if (S.rail !== 'all' && S.rail !== a) S.rail = a;
   const switching = !isOpen(a, c);
-  if (switching) { saveDraft(); clearPending(); closeAutocomplete(); }
+  if (switching) { saveDraft(); clearPending(); closeAutocomplete(); $('#gallery-view')?.close(); }
   S.open = { a, c };
   if (switching) S.openCode.clear();
   S.messages = [];
@@ -741,8 +747,160 @@ RENDER.home = function renderHome() {
   if (S.rail === 'bookmarks') { renderBookmarks(); return; }
   if (S.rail === 'todo') { renderTodos(); return; }
   // Bursts of events (catch-up after connecting): at most one reload every 600 ms.
-  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = 0; loadHome(); }, 600);
+  if (!homeTimer) homeTimer = setTimeout(() => { homeTimer = 0; (homeTab() === 'catchup' ? loadCatchUp : loadHome)(); }, 600);
 };
+
+// Home shows the workspace cards, or the Catch-up across all of them.
+const homeTab = () => (S.homeTab ??= load('homeTab') || 'workspaces');
+const homeTabs = () => `<div class="seg big home-tabs">${[['workspaces', 'Workspaces'], ['catchup', 'Catch-up']]
+  .map(([k, l]) => `<button class="${homeTab() === k ? 'on' : ''}" data-home-tab="${k}">${l}</button>`).join('')}</div>`;
+const homeHello = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+
+function setHomeTab(k) {
+  S.homeTab = k;
+  save('homeTab', k);
+  if (k === 'catchup') { catchData = null; renderCatchUp(); loadCatchUp(); } else loadHome();
+}
+
+// ------------------------------------------------------------ catch-up
+
+const SINCE = [['unread', 'Unread'], ['today', 'Today'], ['24h', '24 hours'], ['3d', '3 days'], ['7d', '7 days']];
+const catchSince = () => (S.catchSince ??= load('catchSince') || 'unread');
+/** The start of the time looked at; null for "since each conversation was last read". */
+function sinceTime(k) {
+  const day = 86400000;
+  return { today: dayStart(), '24h': Date.now() - day, '3d': Date.now() - 3 * day, '7d': Date.now() - 7 * day }[k] ?? null;
+}
+let catchData = null; // the last catch-up, while it is on screen
+
+async function loadCatchUp() {
+  let data;
+  try {
+    data = await invoke('catch_up', { since: sinceTime(catchSince()) });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  if (S.rail !== 'home' || S.open || homeTab() !== 'catchup') return;
+  catchData = data;
+  renderCatchUp();
+}
+
+/** A time that reads well whatever the span: the hour today, the day before. */
+const whenShort = (ts) => (ts >= dayStart() ? fmtTime(ts) : `${shortDay(ts)} ${fmtTime(ts)}`);
+
+function renderCatchUp() {
+  const d = catchData;
+  const where = (a, c) => {
+    const ch = S.channels.get(key(a, c));
+    return `<span class="cu-where">${ch ? `${glyph(ch)}<span>${esc(ch.display_name)}</span>` : '<span>A conversation</span>'}<span>${esc(account(a)?.name || '')}</span></span>`;
+  };
+  const line = (m) => `<div class="cu-line"><b>${esc(m.author_name)}</b><span>${esc(plain(m.text, 220) || (m.attachments?.length ? 'sent a file' : ''))}</span></div>`;
+  const WHY = { direct: 'Direct', mention: 'Mention', everyone: '@channel' };
+
+  const forYou = (d?.for_you || []).map(({ message: m, why, read }) => `
+    <div class="cu-row ${read ? 'read' : ''}" data-a="${esc(m.account_id)}" data-c="${esc(m.channel_id)}" data-id="${esc(m.id)}" data-root="${esc(m.thread_root || '')}" data-kind="for-you">
+      ${messageAvatar(m)}
+      <div class="cu-main">
+        <div class="cu-top"><b>${esc(m.author_name)}</b><span class="cu-why ${why}">${WHY[why]}</span>${where(m.account_id, m.channel_id)}
+          ${m.thread_root ? `<span class="cu-in">${icon('reply')}in a thread</span>` : ''}<time>${esc(whenShort(m.ts))}</time></div>
+        <div class="cu-text">${esc(plain(m.text, 400) || (m.attachments?.length ? 'sent a file' : ''))}</div>
+      </div>
+      <div class="cu-acts">
+        <button class="icon-btn ${todoOf(m) ? 'on' : ''}" data-act="cu-todo" title="${todoOf(m) ? 'In your to-do list' : 'Add to to-do list'}">${icon('todo')}</button>
+        <button class="todo-go" data-act="cu-open">Open${icon('chevron')}</button></div>
+    </div>`).join('');
+  const more = d && d.for_you_total > d.for_you.length ? `<p class="muted cu-more">and ${d.for_you_total - d.for_you.length} more, older</p>` : '';
+
+  const threads = (d?.threads || []).map((t) => `
+    <div class="cu-card ${t.read ? 'read' : ''}" data-a="${esc(t.account_id)}" data-c="${esc(t.channel_id)}" data-id="${esc(t.messages.at(-1)?.id || '')}" data-root="${esc(t.root?.id || t.messages.at(-1)?.thread_root || '')}" data-kind="thread">
+      <div class="cu-top">${where(t.account_id, t.channel_id)}<span class="cu-count">${t.count} new ${t.count === 1 ? 'reply' : 'replies'}</span>
+        <time>${esc(whenShort(t.messages.at(-1)?.ts || 0))}</time><button class="todo-go" data-act="cu-open">Open thread${icon('chevron')}</button></div>
+      ${t.root ? `<div class="cu-root">${icon('reply')}<b>${esc(t.root.author_name)}</b><span>${esc(plain(t.root.text, 160))}</span></div>` : ''}
+      ${t.messages.map(line).join('')}
+    </div>`).join('');
+
+  const busy = (d?.busy || []).map((b) => `
+    <div class="cu-card ${b.read ? 'read' : ''}" data-a="${esc(b.account_id)}" data-c="${esc(b.channel_id)}" data-id="${esc(b.messages.at(-1)?.id || '')}" data-root="" data-kind="busy">
+      <div class="cu-top">${where(b.account_id, b.channel_id)}<span class="cu-count">${b.count} ${b.count === 1 ? 'message' : 'messages'}</span>
+        <span class="cu-people">${b.people} ${b.people === 1 ? 'person' : 'people'}</span><time>${esc(whenShort(b.messages.at(-1)?.ts || 0))}</time>
+        <span class="cu-btns">${b.read ? '<span class="cu-done">Read</span>' : '<button class="btn" data-act="cu-read">Mark read</button>'}<button class="todo-go" data-act="cu-open">Open${icon('chevron')}</button></span></div>
+      ${b.messages.map(line).join('')}
+    </div>`).join('');
+
+  // The service counts news the archive does not have yet: listed while it downloads.
+  const pending = (d?.pending || []).map((p) => `
+    <div class="cu-card" data-a="${esc(p.account_id)}" data-c="${esc(p.channel_id)}" data-id="" data-root="" data-kind="pending">
+      <div class="cu-top">${where(p.account_id, p.channel_id)}<span class="cu-count">${p.count} new</span>
+        ${p.mentions ? `<span class="cu-why mention">${p.mentions} ${p.mentions === 1 ? 'mention' : 'mentions'}</span>` : ''}
+        <span class="cu-people">downloading...</span>
+        <span class="cu-btns"><button class="btn" data-act="cu-read">Mark read</button><button class="todo-go" data-act="cu-open">Open${icon('chevron')}</button></span></div>
+    </div>`).join('');
+
+  const empty = d && !forYou && !threads && !busy && !pending;
+  // A time span also lists what is read already: only the rest can be marked read.
+  const unread = d && [...d.for_you, ...d.threads, ...d.busy, ...d.pending].some((x) => !x.read);
+  const muted = d?.muted ? `<p class="muted cu-empty">${empty ? '' : 'Also: '}news in ${d.muted} ${d.muted === 1 ? 'conversation' : 'conversations'} set to Silent, not shown here.</p>` : '';
+  const stat = (n, label, hot) => `<div class="cu-stat ${hot && n ? 'hot' : ''}"><b>${d ? count(n) : '-'}</b><span>${label}</span></div>`;
+  const summary = !d ? 'Looking through your conversations...'
+    : empty ? 'You are all caught up.'
+    : `${d.messages} ${d.messages === 1 ? 'message' : 'messages'} in ${d.conversations} ${d.conversations === 1 ? 'conversation' : 'conversations'}.`;
+  const section = (title, body, extra = '') => body ? `<section class="cu-section"><h2>${title}</h2>${body}${extra}</section>` : '';
+  $('#home').innerHTML = `<div class="home-head"><h1>${homeHello()}</h1><p class="muted">${esc(summary)}</p></div>${homeTabs()}
+    <div class="cu-bar"><div class="seg big">${SINCE.map(([k, l]) => `<button class="${catchSince() === k ? 'on' : ''}" data-since="${k}">${l}</button>`).join('')}</div>
+      ${d && !empty && unread ? '<button class="btn" data-act="cu-read-all">Mark all read</button>' : ''}</div>
+    <div class="cu-stats">${stat(d?.for_you_total || 0, 'for you', true)}${stat(d?.threads.length || 0, 'threads with replies')}
+      ${stat(d?.messages || 0, 'messages')}${stat(d?.conversations || 0, 'conversations')}</div>
+    ${empty ? `<p class="muted cu-empty">Nothing new ${catchSince() === 'unread' ? 'since you last read your conversations' : 'in this time'}.</p>` : ''}
+    ${section('For you', forYou, more)}${section('Replies in your threads', threads)}${section('Busiest conversations', busy)}
+    ${section('Not downloaded yet', pending)}${muted}`;
+}
+
+/** Clicks on the Catch-up; false when the click was not for it. */
+function onCatchClick(e) {
+  const tab = e.target.closest('[data-home-tab]');
+  if (tab) { setHomeTab(tab.dataset.homeTab); return true; }
+  if (homeTab() !== 'catchup') return false;
+  const since = e.target.closest('[data-since]');
+  if (since) {
+    S.catchSince = since.dataset.since;
+    save('catchSince', S.catchSince);
+    catchData = null;
+    renderCatchUp();
+    loadCatchUp();
+    return true;
+  }
+  if (e.target.closest('[data-act="cu-read-all"]')) {
+    const d = catchData;
+    const all = [...(d?.for_you || []).map((f) => [f.message.account_id, f.message.channel_id]), ...[...(d?.threads || []), ...(d?.busy || []), ...(d?.pending || [])].map((x) => [x.account_id, x.channel_id])];
+    markRead([...new Map(all.map((p) => [p.join('\u0001'), p])).values()]);
+    return true;
+  }
+  const row = e.target.closest('.cu-row, .cu-card');
+  if (!row) return false;
+  const { a, c, id, root } = row.dataset;
+  if (e.target.closest('[data-act="cu-read"]')) { markRead([[a, c]]); return true; }
+  if (e.target.closest('[data-act="cu-todo"]')) {
+    const f = catchData?.for_you.find((x) => x.message.id === id && x.message.channel_id === c);
+    if (f) addTodo(f.message).then(() => renderCatchUp());
+    return true;
+  }
+  // Anywhere else on a row opens it: a reply in its thread, a message where it is.
+  if (root) { openTarget(a, c, id || null, root); return true; }
+  const m = catchData?.for_you.find((x) => x.message.id === id)?.message;
+  if (m) jumpTo(a, c, id, m); else openChannel(a, c);
+  return true;
+}
+
+async function markRead(channels) {
+  try {
+    await invoke('mark_conversations_read', { channels });
+  } catch (e) {
+    toast(String(e));
+    return;
+  }
+  loadCatchUp();
+}
 
 // ------------------------------------------------------------ updates
 
@@ -1120,8 +1278,7 @@ async function loadHome() {
     totals.mentions += c.mentions;
     totals.unread += 1;
   }
-  const hour = new Date().getHours();
-  const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const hello = homeHello();
   const summary = !accounts.length ? 'Add a workspace in Settings to get started.'
     : !totals.unread ? 'You are all caught up.'
     : `${totals.unread} ${totals.unread === 1 ? 'conversation' : 'conversations'} with news${totals.mentions ? `, ${totals.mentions} ${totals.mentions === 1 ? 'mention' : 'mentions'}` : ''}.`;
@@ -1151,7 +1308,8 @@ async function loadHome() {
       <div class="ws-body">${body}</div>
       </section>`;
   };
-  $('#home').innerHTML = `<div class="home-head"><h1>${hello}</h1><p class="muted">${esc(summary)}</p></div>
+  if (homeTab() !== 'workspaces') return;
+  $('#home').innerHTML = `<div class="home-head"><h1>${hello}</h1><p class="muted">${esc(summary)}</p></div>${accounts.length ? homeTabs() : ''}
     <div class="home-grid">${accounts.map(card).join('')}</div>`;
 }
 
@@ -1324,9 +1482,16 @@ async function openFile(a, el) {
   if (!file) { invoke('open_url', { url: href }).catch((x) => toast(String(x))); return; }
   if (el.classList.contains('busy')) return;
   el.classList.add('busy');
+  // Said only when it takes a moment: a file downloaded before opens at once.
+  const slow = setTimeout(() => toast(`Downloading ${name}...`, 600000), 400);
   try {
-    await invoke('open_attachment', { account_id: a, path: file, name });
+    const r = await invoke('open_attachment', { account_id: a, path: file, name });
+    clearTimeout(slow);
+    toast(r.downloaded
+      ? `Downloaded ${name} (${fmtBytes(r.bytes)}). Kept 7 days: Settings, Privacy & storage.`
+      : `Opened ${name} from Agora's downloads`, 5000);
   } catch (e) {
+    clearTimeout(slow);
     toast(`${name}: ${e}`);
   } finally {
     el.classList.remove('busy');
@@ -2091,10 +2256,9 @@ function renderPanel(rebuild = false) {
     const bookmarks = (d?.bookmarks || []).map((b) => `<div class="bm-link">${icon('link')}<a href="${esc(b.url)}" data-url="${esc(b.url)}" title="${esc(b.url)}">${esc(b.title)}</a></div>`).join('');
     const pins = d?.pins || [];
     const canvases = (d?.canvases || []).map((cv) => `<button class="canvas-link" data-canvas="${esc(cv.id)}">${icon('page')}<span>${esc(cv.title)}</span></button>`).join('');
-    const images = [];
+    const images = detailImages(p);
     const links = new Set();
     for (const m of S.messages) {
-      for (const f of m.attachments || []) if ((f.mime || '').startsWith('image/')) images.push(f);
       for (const l of m.links || []) links.add(l.url);
       for (const u of extractUrls(m.text)) links.add(u);
     }
@@ -2105,8 +2269,10 @@ function renderPanel(rebuild = false) {
         ${bookmarks ? `<div class="section">Bookmarks</div><div class="link-list">${bookmarks}</div>` : ''}
         ${pins.length ? `<div class="section">Pinned · ${pins.length}</div><div class="pins">${pins.map((m) => `<div class="hit" data-a="${esc(m.account_id)}" data-c="${esc(m.channel_id)}" data-id="${esc(m.id)}" title="Go to the message">${messagesHtml([m], true)}</div>`).join('')}</div>` : ''}
         ${p.loading ? '<div class="section muted">Loading details...</div>' : ''}${p.error ? `<div class="section muted">${esc(p.error)}</div>` : ''}
-        <div class="section">Images</div>
-        ${images.length ? `<div class="gallery">${images.map((f) => `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`).join('')}</div>` : '<div class="section muted">None in the loaded messages.</div>'}
+        <div class="section gallery-head"><span>Images${images.length ? ` · ${images.length}` : ''}</span>
+          ${images.length ? `<button class="link-btn" data-act="open-gallery" title="All the images, larger, by month">${icon('grid')}Open gallery</button>` : ''}</div>
+        ${images.length ? `<div class="gallery">${images.slice(0, DETAIL_IMAGES).map((it, i) => `<img src="${esc(it.src)}" data-gi="${i}" alt="${esc(it.name)}" title="${esc([it.author, itemDate(it.ts)].filter(Boolean).join(' · '))}" loading="lazy">`).join('')}${images.length > DETAIL_IMAGES ? `<button class="gallery-more" data-act="open-gallery" title="Open gallery">+${images.length - DETAIL_IMAGES}</button>` : ''}</div>`
+          : `<div class="section muted">${p.images ? 'None in this conversation yet.' : 'None in the loaded messages.'}</div>`}
         <div class="section">Links</div>
         <div class="link-list">${[...links].reverse().map((u) => `<div><a href="${esc(u)}" data-url="${esc(u)}">${esc(u)}</a></div>`).join('') || '<span class="muted">None in the loaded messages.</span>'}</div>
       </div>`;
@@ -2193,13 +2359,45 @@ async function openCanvas(a, id, list = []) {
   }
 }
 
+/** Images shown in Details before "Open gallery". */
+const DETAIL_IMAGES = 11;
+
+/** The Details images: every archived one once loaded, until then those of the loaded messages. */
+function detailImages(p) {
+  return p.images || galleryItems(S.messages);
+}
+
+/** The image viewer, stepping through `items` from `index`; an open gallery follows along. */
+function viewImages(items, index) {
+  openViewer(items[index].full, {
+    items,
+    index,
+    onStep: (i) => $('#gallery-view')?.reveal(i),
+    onGoto: (it) => {
+      $('#gallery-view')?.close();
+      const m = it.message;
+      jumpTo(m.account_id, m.channel_id, m.id, m);
+    },
+  });
+}
+
+function openImageGallery(p) {
+  const c = S.channels.get(key(p.a, p.c));
+  const title = c ? (isDirect(c) ? c.display_name : `#${c.display_name}`) : 'Images';
+  openGallery({ items: detailImages(p), title, open: viewImages, left: $('#main').getBoundingClientRect().left });
+}
+
 /** The Details panel: the service's description, bookmarks and pins, then images and links. */
 async function openDetails() {
   if (!S.open) return;
   const { a, c } = S.open;
-  const p = { type: 'gallery', a, c, details: null, loading: true, error: null };
+  const p = { type: 'gallery', a, c, details: null, loading: true, error: null, images: null };
   S.panel = p;
   schedule('panel', 'header');
+  // Every image in the archive, not only the loaded messages.
+  invoke('channel_images', { account_id: a, channel_id: c })
+    .then((list) => { p.images = galleryItems(list); if (S.panel === p) schedule('panel'); })
+    .catch((e) => console.warn('images', e));
   try {
     p.details = await invoke('channel_details', { account_id: a, channel_id: c });
     // Pins act like search results: a click goes to the message (see `jumpTo`).
@@ -2555,6 +2753,15 @@ async function setStarred(c, starred) {
   }
 }
 
+/** Focus mode: no popups and no sounds from anyone until turned off; "zzz" on the taskbar and tray. */
+async function toggleFocus() {
+  const n = S.settings.notifications;
+  n.focus = !n.focus;
+  schedule('rail');
+  toast(n.focus ? 'Focus mode on: no notifications until you turn it off' : 'Focus mode off: notifications are back');
+  try { await invoke('save_settings', { settings: S.settings }); } catch (e) { toast(String(e)); }
+}
+
 async function saveGroups(groups) {
   S.settings.groups = groups;
   schedule('sidebar');
@@ -2840,12 +3047,17 @@ function closeOverlay() {
  * Full-screen image: wheel zooms around the pointer, drag pans, double-click switches between
  * fitted and actual size, + - 0 on the keyboard. A click outside the image closes it. When
  * zoomed, a small map on the right shows the whole image and the part on screen.
+ * With `set` (gallery items and the one shown), arrows and ← → step through the set.
  */
-function openViewer(src) {
+function openViewer(src, set = null) {
   const v = document.createElement('div');
   v.className = 'viewer';
+  const nav = set && set.items.length > 1;
   v.innerHTML = `<img src="${esc(src)}" alt="" draggable="false">
     <div class="viewer-map" title="Click or drag to move"><img src="${esc(src)}" alt="" draggable="false"><i class="vm-box"></i></div>
+    ${nav ? `<button class="viewer-nav prev" data-z="prev" title="Newer (←)">${icon('chevron')}</button>
+      <button class="viewer-nav next" data-z="next" title="Older (→)">${icon('chevron')}</button>` : ''}
+    ${set ? `<div class="viewer-cap"><span class="vc-text"></span><button data-z="goto">Go to message</button></div>` : ''}
     <div class="viewer-bar">
       <button data-z="out" title="Zoom out (-)">−</button><span class="viewer-pct">100%</span><button data-z="in" title="Zoom in (+)">+</button>
       <button data-z="fit" title="Fit to screen (0)">Fit</button><button data-z="close" title="Close (Esc)">${icon('close')}</button>
@@ -2904,6 +3116,28 @@ function openViewer(src) {
     else if (how === 'fit') zoomTo(1);
   };
   img.addEventListener('load', draw);
+  // Another image of the set, fitted.
+  const caption = () => {
+    if (!set) return;
+    const it = set.items[set.index];
+    v.querySelector('.vc-text').textContent = [nav ? `${set.index + 1} / ${set.items.length}` : '', it.author, itemDate(it.ts), it.name].filter(Boolean).join('  ·  ');
+    v.querySelector('.prev')?.toggleAttribute('disabled', set.index === 0);
+    v.querySelector('.next')?.toggleAttribute('disabled', set.index === set.items.length - 1);
+  };
+  v.step = (d) => {
+    if (!nav) return;
+    const i = Math.min(set.items.length - 1, Math.max(0, set.index + d));
+    if (i === set.index) return;
+    set.index = i;
+    scale = 1; x = y = 0;
+    const full = set.items[i].full;
+    img.src = full;
+    map.querySelector('img').src = full;
+    caption();
+    draw();
+    set.onStep?.(i);
+  };
+  caption();
   v.addEventListener('wheel', (e) => { e.preventDefault(); zoomTo(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY); }, { passive: false });
   img.addEventListener('dblclick', (e) => zoomTo(scale > 1.001 ? 1 : closer(), e.clientX, e.clientY));
   let drag = null;
@@ -2924,9 +3158,16 @@ function openViewer(src) {
   img.addEventListener('pointerup', () => { drag = null; });
   v.addEventListener('click', (e) => {
     const b = e.target.closest('[data-z]');
-    if (b) { if (b.dataset.z === 'close') v.remove(); else v.zoom(b.dataset.z); return; }
+    if (b) {
+      const z = b.dataset.z;
+      if (z === 'close') v.remove();
+      else if (z === 'prev' || z === 'next') v.step(z === 'prev' ? -1 : 1);
+      else if (z === 'goto') { v.remove(); set.onGoto?.(set.items[set.index]); }
+      else v.zoom(z);
+      return;
+    }
     if (e.target === img) { if (!moved && scale <= 1.001) zoomTo(closer(), e.clientX, e.clientY); return; }
-    if (!e.target.closest('.viewer-bar, .viewer-map')) v.remove();
+    if (!e.target.closest('.viewer-bar, .viewer-map, .viewer-nav, .viewer-cap')) v.remove();
   });
   document.body.appendChild(v);
 }
@@ -3091,6 +3332,7 @@ function bindUi() {
   const rail = $('#rail');
   rail.addEventListener('click', (e) => {
     if (e.target.closest('[data-act="settings"]')) return toggleSettings();
+    if (e.target.closest('[data-act="focus"]')) return toggleFocus();
     const item = e.target.closest('.rail-item');
     if (item) selectRail(item.dataset.id);
   });
@@ -3207,6 +3449,7 @@ function bindUi() {
   });
   $('#home').addEventListener('click', (e) => {
     if (S.rail === 'todo' && onTodoClick(e)) return;
+    if (S.rail === 'home' && onCatchClick(e)) return;
     const bm = e.target.closest('.bm-item');
     if (bm) {
       const m = S.bookmarkList.find((x) => x.account_id === bm.dataset.a && x.channel_id === bm.dataset.c && x.id === bm.dataset.id);
@@ -3365,6 +3608,9 @@ function bindUi() {
     }
     const link = e.target.closest('a[data-url]');
     if (link && !e.target.closest('.msg')) { e.preventDefault(); invoke('open_url', { url: link.dataset.url }); return; }
+    const gi = e.target.closest('img[data-gi]');
+    if (gi && S.panel?.type === 'gallery') { viewImages(detailImages(S.panel), Number(gi.dataset.gi)); return; }
+    if (e.target.closest('[data-act="open-gallery"]') && S.panel?.type === 'gallery') { openImageGallery(S.panel); return; }
     const img = e.target.closest('img[data-full]');
     if (img && !e.target.closest('.msg')) { openViewer(img.dataset.full); return; }
     onMessageAreaClick(e, true);
@@ -3529,9 +3775,12 @@ function bindUi() {
     const open = document.querySelector('.viewer');
     const zoomKey = { '+': 'in', '=': 'in', '-': 'out', 0: 'fit' }[e.key];
     if (open?.zoom && zoomKey && !e.ctrlKey) { e.preventDefault(); open.zoom(zoomKey); return; }
+    if (open?.step && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); open.step(e.key === 'ArrowLeft' ? -1 : 1); return; }
     if (e.key === 'Escape') {
       const viewer = document.querySelector('.viewer');
       if (viewer) { viewer.remove(); return; }
+      const gallery = $('#gallery-view');
+      if (gallery && $('#popover').hidden) { gallery.close(); return; }
       const canvas = $('#canvas-view');
       if (canvas && $('#popover').hidden) { canvas.remove(); return; }
       if (!$('#popover').hidden) closePopover();

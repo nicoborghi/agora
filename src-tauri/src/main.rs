@@ -8,6 +8,7 @@ mod login;
 mod media;
 mod migrate;
 mod popup;
+mod storage;
 mod tray;
 
 use agora_core::{engine::Engine, secrets, store::Store};
@@ -26,6 +27,9 @@ pub struct AppState {
 
 fn main() {
     tracing_subscriber::fmt().with_target(false).init();
+    // Before Tauri opens the window, whose webview then holds its cache open.
+    #[cfg(windows)]
+    storage::clear_webview_if_asked("app.agora.desktop");
 
     let builder = tauri::Builder::default();
     // First, so a second start stops here and only shows the window of the first. Installed
@@ -97,6 +101,7 @@ fn main() {
             commands::list_channels,
             commands::get_messages,
             commands::get_thread,
+            commands::channel_images,
             commands::open_channel,
             commands::send_message,
             commands::edit_message,
@@ -123,6 +128,10 @@ fn main() {
             commands::reconnect,
             commands::reconnect_account,
             commands::home,
+            commands::catch_up,
+            commands::storage_usage,
+            commands::free_storage,
+            commands::mark_conversations_read,
             commands::find_users,
             commands::upload_file,
             commands::open_url,

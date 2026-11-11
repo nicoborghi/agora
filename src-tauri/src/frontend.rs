@@ -29,7 +29,7 @@ impl Frontend for TauriFrontend {
         let _ = self.app.emit_to("main", "agora-sound", sound.to_string());
     }
 
-    fn set_tray(&self, dots: Vec<String>) {
-        tray::set_dots(&self.app, &dots);
+    fn set_tray(&self, dots: Vec<String>, focus: bool) {
+        tray::set_dots(&self.app, &dots, focus);
     }
 }

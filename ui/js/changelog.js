@@ -3,6 +3,16 @@
 
 export const CHANGES = [
   {
+    version: '0.5.0',
+    items: [
+      ['Catch-up', 'Home has a Catch-up tab: what is for you, replies in your threads and the busiest conversations since you last looked, today, or the last days. Mark it all read in one click.'],
+      ['Focus mode', 'The bell above Settings turns off every popup and sound until you turn it back on. The taskbar shows "zzz" and the tray icon turns gray.'],
+      ['Image gallery', 'Details shows every image of a conversation. Open gallery for a larger view by month, with a size slider and a timeline to move through time; arrows step from one image to the next.'],
+      ['See what takes space', 'Settings, Privacy & storage shows how much Agora keeps on disk by type: the archive, downloaded files, the image cache, the webview cache. Delete any of them, one file at a time if you like.'],
+      ['Download notice', 'A short message says when a file is downloaded, how big it is and how long it is kept.'],
+    ],
+  },
+  {
     version: '0.4.0',
     items: [
       ['To-do list', 'Put any message on your to-do list from its hover bar, or type your own. Give it a priority, a due date with the days left, a project and a note, and tick it off when done. The left bar shows how many are open.'],

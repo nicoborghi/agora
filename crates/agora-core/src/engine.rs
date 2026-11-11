@@ -25,6 +25,8 @@ use tokio::task::JoinHandle;
 const EVENT_QUEUE: usize = 1024;
 /// Workspace dots on the taskbar button (2×2 grid).
 const MAX_TRAY_DOTS: usize = 4;
+/// Messages with images the gallery reads from the archive, at most.
+const GALLERY_MAX: u32 = 3000;
 const MARK_READ_DELAY: Duration = Duration::from_millis(1500);
 /// A wall-clock jump bigger than this between two 15 s ticks means the PC was asleep.
 const RESUME_GAP: Duration = Duration::from_secs(45);
@@ -36,8 +38,9 @@ pub trait Frontend: Send + Sync + 'static {
     fn popup(&self, note: PopupNote);
     fn play_sound(&self, sound: &str);
     /// Colours of the workspaces with unread news, in left-bar order (at most 4): one general dot
-    /// on the tray icon, one dot per workspace on the taskbar button.
-    fn set_tray(&self, dots: Vec<String>);
+    /// on the tray icon, one dot per workspace on the taskbar button. `focus`: focus mode is on,
+    /// shown as "zzz" on both.
+    fn set_tray(&self, dots: Vec<String>, focus: bool);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +100,79 @@ impl MessageView {
             reactors: HashMap::new(),
             reply_to: None,
         }
+    }
+}
+
+/// A message the catch-up puts under "For you", and why.
+#[derive(Debug, Clone, Serialize)]
+pub struct CatchUpMessage {
+    pub message: MessageView,
+    /// "direct", "mention" or "everyone" (@channel, @here, @all).
+    pub why: &'static str,
+    /// Its conversation is read past it (a time span can show read messages too).
+    pub read: bool,
+}
+
+/// A thread you are in, or a busy conversation, in a catch-up.
+#[derive(Debug, Clone, Serialize)]
+pub struct CatchUpItem {
+    pub account_id: AccountId,
+    pub channel_id: String,
+    /// New messages (replies, for a thread) in the time looked at.
+    pub count: u32,
+    /// How many people wrote them.
+    pub people: u32,
+    /// The newest of them, oldest first.
+    pub messages: Vec<MessageView>,
+    /// For a thread: the message that started it.
+    pub root: Option<MessageView>,
+    /// Its conversation is read past the newest of them.
+    pub read: bool,
+    /// Mentions of you the service counts (for a conversation not downloaded yet).
+    pub mentions: u32,
+}
+
+/// What happened while you were away, across every workspace: for you first, then your
+/// threads, then the busiest conversations.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CatchUp {
+    pub for_you: Vec<CatchUpMessage>,
+    /// All of them, when there were more than the list holds.
+    pub for_you_total: u32,
+    pub threads: Vec<CatchUpItem>,
+    pub busy: Vec<CatchUpItem>,
+    /// Conversations the service counts as unread whose new messages are not downloaded yet
+    /// (they are being fetched); `count` is the service's count, `mentions` its mentions.
+    pub pending: Vec<CatchUpItem>,
+    /// Conversations set to Silent that had news: left out, but counted.
+    pub muted: u32,
+    /// Messages from others, and the conversations they are in.
+    pub messages: u32,
+    pub conversations: u32,
+}
+
+/// What a catch-up makes of one message.
+#[derive(Debug, PartialEq)]
+enum Catch {
+    ForYou(&'static str),
+    Reply,
+    Traffic,
+    Skip,
+}
+
+fn classify(m: &Message, me: &str, direct: bool) -> Catch {
+    if m.deleted || (!me.is_empty() && m.author_id == me) {
+        Catch::Skip
+    } else if direct {
+        Catch::ForYou("direct")
+    } else if !me.is_empty() && m.mentions.iter().any(|u| u == me) {
+        Catch::ForYou("mention")
+    } else if m.mentions.iter().any(|u| u == MENTION_ALL) {
+        Catch::ForYou("everyone")
+    } else if m.thread_root.is_some() {
+        Catch::Reply
+    } else {
+        Catch::Traffic
     }
 }
 
@@ -728,7 +804,7 @@ impl Engine {
         }
         drop(dots);
         colors.truncate(MAX_TRAY_DOTS);
-        self.frontend.set_tray(colors);
+        self.frontend.set_tray(colors, self.settings().notifications.focus);
     }
 
     /// Rebuilds tray dots from stored unread counts (start-up, settings or prefs change).
@@ -1082,6 +1158,13 @@ impl Engine {
         ))
     }
 
+    /// Every image in the archive of a conversation, newest first (the gallery in Details).
+    pub fn channel_images(&self, acc: &str, ch: &str) -> Result<Vec<MessageView>, String> {
+        let self_id = self.self_id(acc);
+        let found = self.store.image_messages(acc, ch, GALLERY_MAX).map_err(err)?;
+        Ok(found.into_iter().map(|a| MessageView::new(a, self_id.as_deref())).collect())
+    }
+
     /// The UI opened a conversation (or closed all with `None`).
     pub fn open_channel(&self, target: Option<(AccountId, String)>) -> Result<(), String> {
         // Leaving a conversation marked unread lets it be read again next time.
@@ -1113,12 +1196,22 @@ impl Engine {
     }
 
     fn mark_read(&self, acc: &str, ch: &str) -> Result<(), String> {
-        if lock(&self.held_unread).contains(&(acc.to_string(), ch.to_string())) {
+        self.mark_read_as(acc, ch, false)
+    }
+
+    /// `asked`: the user said so (Catch-up's Mark read). That overrides a conversation held unread,
+    /// and the read position moves even when the counters are already 0: they skip thread replies
+    /// and history fetched on reconnecting, which still count as news by time.
+    fn mark_read_as(&self, acc: &str, ch: &str, asked: bool) -> Result<(), String> {
+        let k = (acc.to_string(), ch.to_string());
+        if asked {
+            lock(&self.held_unread).remove(&k);
+        } else if lock(&self.held_unread).contains(&k) {
             return Ok(());
         }
         let Some(c) = self.store.get_channel(acc, ch).map_err(err)? else { return Ok(()) };
-        let has_dot = lock(&self.dots).contains_key(&(acc.to_string(), ch.to_string()));
-        if c.unread == 0 && c.mentions == 0 && !has_dot {
+        let has_dot = lock(&self.dots).contains_key(&k);
+        if !asked && c.unread == 0 && c.mentions == 0 && !has_dot {
             return Ok(());
         }
         let latest = self.store.latest_message(acc, ch).map_err(err)?;
@@ -1281,6 +1374,176 @@ impl Engine {
             out.push(HomeItem { channel: self.channel_view(c).map_err(err)?, messages });
         }
         Ok(out)
+    }
+
+    /// What happened since `since` (None: since each conversation was last read) in every enabled
+    /// workspace. Conversations are read one at a time and only the capped lists are kept.
+    pub fn catch_up_summary(self: &Arc<Self>, since: Option<Millis>) -> Result<CatchUp, String> {
+        const FOR_YOU: usize = 50;
+        const THREADS: usize = 20;
+        const BUSY: usize = 12;
+        const SHOWN: usize = 2;
+        const SCAN: u32 = 2000;
+        let enabled: HashSet<String> = self.accounts().into_iter().filter(|a| a.enabled).map(|a| a.id).collect();
+        let n = self.settings().notifications;
+        let prefs = self.store.all_channel_prefs().unwrap_or_default();
+        let silent = |c: &Channel| {
+            let own = prefs.get(&(c.account_id.clone(), c.id.clone())).and_then(|p| p.level);
+            own.unwrap_or_else(|| n.default_level(&c.account_id, c.kind.is_direct())) == Level::Silent
+        };
+        // Keeps the newest `SHOWN`, oldest first.
+        let keep = |list: &mut Vec<Authored>, a: Authored| {
+            list.push(a);
+            if list.len() > SHOWN {
+                list.remove(0);
+            }
+        };
+        let mut out = CatchUp::default();
+        let mut for_you: Vec<CatchUpMessage> = Vec::new();
+        let mut self_ids: HashMap<String, String> = HashMap::new();
+        for c in self.store.list_channels(None).map_err(err)? {
+            let after = since.unwrap_or(c.last_read);
+            // The service's counters can say there is news the archive does not have yet.
+            let counted = c.unread > 0 || c.mentions > 0;
+            if !enabled.contains(&c.account_id) || (c.last_activity <= after && !counted) {
+                continue;
+            }
+            let me = self_ids.entry(c.account_id.clone()).or_insert_with(|| self.self_id(&c.account_id).unwrap_or_default()).clone();
+            let me_opt = Some(me.as_str()).filter(|s| !s.is_empty());
+            let (direct, quiet) = (c.kind.is_direct(), silent(&c));
+            let (mut traffic, mut traffic_n, mut people) = (Vec::new(), 0u32, HashSet::new());
+            let mut replies: HashMap<String, (u32, HashSet<String>, Vec<Authored>)> = HashMap::new();
+            let mut any = false;
+            // The newest message from others: the conversation is read when its read position is past it.
+            let mut latest = 0;
+            for a in self.store.messages_after(&c.account_id, &c.id, after, SCAN).map_err(err)? {
+                // @channel in a conversation you silenced is not for you.
+                let kind = match classify(&a.message, &me, direct) {
+                    Catch::ForYou("everyone") if quiet => Catch::Traffic,
+                    k => k,
+                };
+                if kind == Catch::Skip {
+                    continue;
+                }
+                out.messages += 1;
+                any = true;
+                latest = latest.max(a.message.ts);
+                match kind {
+                    Catch::ForYou(why) => {
+                        let read = a.message.ts <= c.last_read;
+                        for_you.push(CatchUpMessage { message: MessageView::new(a, me_opt), why, read });
+                        out.for_you_total += 1;
+                        if for_you.len() >= 2 * FOR_YOU {
+                            for_you.sort_by_key(|f| std::cmp::Reverse(f.message.message.ts));
+                            for_you.truncate(FOR_YOU);
+                        }
+                    }
+                    Catch::Reply => {
+                        let root = a.message.thread_root.clone().unwrap_or_default();
+                        let r = replies.entry(root).or_default();
+                        r.0 += 1;
+                        r.1.insert(a.message.author_id.clone());
+                        keep(&mut r.2, a);
+                    }
+                    _ => {
+                        traffic_n += 1;
+                        people.insert(a.message.author_id.clone());
+                        keep(&mut traffic, a);
+                    }
+                }
+            }
+            if any {
+                out.conversations += 1;
+            }
+            // Replies in threads you started or wrote in are yours; the rest is conversation traffic.
+            for (root, (count, ppl, msgs)) in replies {
+                if me_opt.is_some() && self.store.in_thread(&c.account_id, &c.id, &root, &me).map_err(err)? {
+                    let root_view = match self.store.get_message(&c.account_id, &c.id, &root).map_err(err)? {
+                        Some(m) => Some(self.message_view(m).map_err(err)?),
+                        None => None,
+                    };
+                    let read = msgs.last().is_some_and(|a| a.message.ts <= c.last_read);
+                    out.threads.push(CatchUpItem {
+                        account_id: c.account_id.clone(),
+                        channel_id: c.id.clone(),
+                        count,
+                        people: ppl.len() as u32,
+                        messages: msgs.into_iter().map(|a| MessageView::new(a, me_opt)).collect(),
+                        read,
+                        root: root_view,
+                        mentions: 0,
+                    });
+                } else {
+                    traffic_n += count;
+                    people.extend(ppl);
+                }
+            }
+            if !direct && !quiet && traffic_n > 0 {
+                out.busy.push(CatchUpItem {
+                    account_id: c.account_id.clone(),
+                    channel_id: c.id.clone(),
+                    count: traffic_n,
+                    people: people.len() as u32,
+                    messages: traffic.into_iter().map(|a| MessageView::new(a, me_opt)).collect(),
+                    read: latest <= c.last_read,
+                    root: None,
+                    mentions: 0,
+                });
+            }
+            // Silent conversations stay out (as on Home, unless they mention you): counted only.
+            let left_out = quiet && !(c.mentions > 0 && n.mentions_override);
+            if left_out && (traffic_n > 0 || counted) {
+                out.muted += 1;
+            } else if counted && !any {
+                // News by the service's count that the archive lacks: shown as such, and fetched.
+                out.pending.push(CatchUpItem {
+                    account_id: c.account_id.clone(),
+                    channel_id: c.id.clone(),
+                    count: c.unread.max(c.mentions),
+                    people: 0,
+                    messages: vec![],
+                    read: false,
+                    root: None,
+                    mentions: c.mentions,
+                });
+                self.fetch_newest(&c.account_id, &c.id);
+            }
+        }
+        for_you.sort_by_key(|f| std::cmp::Reverse(f.message.message.ts));
+        for_you.truncate(FOR_YOU);
+        out.for_you = for_you;
+        out.threads.sort_by_key(|t| std::cmp::Reverse(t.messages.last().map_or(0, |m| m.message.ts)));
+        out.threads.truncate(THREADS);
+        out.busy.sort_by_key(|b| (std::cmp::Reverse(b.count), std::cmp::Reverse(b.messages.last().map_or(0, |m| m.message.ts))));
+        out.busy.truncate(BUSY);
+        out.pending.sort_by_key(|p| (std::cmp::Reverse(p.mentions), std::cmp::Reverse(p.count)));
+        Ok(out)
+    }
+
+    /// Fetches a conversation's newest page into the archive in the background (at most every
+    /// [`VERIFY_EVERY`]); the UI hears of it through `History` when anything was added.
+    fn fetch_newest(self: &Arc<Self>, acc: &str, ch: &str) {
+        let Some(svc) = self.service(acc) else { return };
+        let key = (acc.to_string(), ch.to_string());
+        {
+            let mut v = lock(&self.verified);
+            let page = (key.clone(), None);
+            if v.get(&page).is_some_and(|t| t.elapsed() < VERIFY_EVERY) {
+                return;
+            }
+            v.insert(page, Instant::now());
+        }
+        let me = self.clone();
+        let (acc, ch) = key;
+        self.spawn(async move { me.fill_gap(acc, ch, svc, None, None, 50).await });
+    }
+
+    /// Marks these conversations read, here and on the service (Catch-up's Mark read).
+    pub fn mark_conversations_read(&self, chans: &[(String, String)]) -> Result<(), String> {
+        for (acc, ch) in chans {
+            self.mark_read_as(acc, ch, true)?;
+        }
+        Ok(())
     }
 
     /// Sends a file (pasted or dropped image, attachment) to a conversation.
@@ -1458,8 +1721,9 @@ impl Engine {
         Ok(ChannelDetailsView { purpose: d.purpose, created: d.created, creator, bookmarks: d.bookmarks, pins, canvases: d.canvases })
     }
 
-    /// Saves an attachment under `dir` (once: a finished download is reused) and returns where.
-    pub async fn download_file(&self, acc: &str, path: &str, name: &str, dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    /// Saves an attachment under `dir` (once: a finished download is reused) and returns where,
+    /// and whether it was downloaded just now.
+    pub async fn download_file(&self, acc: &str, path: &str, name: &str, dir: &std::path::Path) -> Result<(std::path::PathBuf, bool), String> {
         // One folder per file (a hash of its path), keeping the file's own name so the system
         // picks the right app and the user sees a sensible name.
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1469,7 +1733,7 @@ impl Engine {
         let clean = clean.trim().trim_matches('.');
         let target = folder.join(if clean.is_empty() { "file" } else { clean });
         if target.exists() {
-            return Ok(target);
+            return Ok((target, false));
         }
         std::fs::create_dir_all(&folder).map_err(err)?;
         let part = folder.join(".download");
@@ -1485,7 +1749,7 @@ impl Engine {
             });
         }
         std::fs::rename(&part, &target).map_err(err)?;
-        Ok(target)
+        Ok((target, true))
     }
 
     /// A link to a message, to paste elsewhere.
@@ -1693,5 +1957,42 @@ impl Engine {
         self.push_tray();
         self.frontend.emit(UiEvent::Accounts);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(author: &str, mentions: &[&str], root: Option<&str>) -> Message {
+        Message {
+            account_id: "a".into(),
+            channel_id: "c".into(),
+            id: "1".into(),
+            author_id: author.into(),
+            ts: 1,
+            text: String::new(),
+            thread_root: root.map(str::to_string),
+            reply_count: 0,
+            edited_at: None,
+            deleted: false,
+            in_channel: false,
+            mentions: mentions.iter().map(|s| s.to_string()).collect(),
+            reactions: vec![],
+            attachments: vec![],
+            links: vec![],
+        }
+    }
+
+    #[test]
+    fn catch_up_sorts_messages() {
+        assert_eq!(classify(&msg("me", &[], None), "me", true), Catch::Skip);
+        assert_eq!(classify(&msg("x", &[], None), "me", true), Catch::ForYou("direct"));
+        assert_eq!(classify(&msg("x", &["me"], Some("r")), "me", false), Catch::ForYou("mention"));
+        assert_eq!(classify(&msg("x", &[MENTION_ALL], None), "me", false), Catch::ForYou("everyone"));
+        assert_eq!(classify(&msg("x", &[], Some("r")), "me", false), Catch::Reply);
+        assert_eq!(classify(&msg("x", &["other"], None), "me", false), Catch::Traffic);
+        // Without knowing who you are, nothing is a mention of you.
+        assert_eq!(classify(&msg("x", &[""], None), "", false), Catch::Traffic);
     }
 }

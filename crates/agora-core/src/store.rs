@@ -1018,6 +1018,36 @@ impl Store {
         Ok(out)
     }
 
+    /// Messages and thread replies newer than `after` (not deleted), the newest `limit`, oldest first.
+    pub fn messages_after(&self, acc: &str, ch: &str, after: Millis, limit: u32) -> StoreResult<Vec<Authored>> {
+        let db = self.db();
+        let mut st = db.prepare_cached(&format!(
+            "SELECT {MSG_COLS}, {AUTHOR_NAME}, u.avatar_url FROM messages m {AUTHOR_JOIN}
+             WHERE m.account_id = ?1 AND m.channel_id = ?2 AND m.ts > ?3 AND m.deleted = 0
+             ORDER BY m.ts DESC LIMIT ?4"
+        ))?;
+        let rows = st.query_map(params![acc, ch, after, limit], |r| read_authored(r))?;
+        let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
+    /// The newest `limit` messages of a conversation that carry an image, threads included,
+    /// newest first: the gallery in Details.
+    pub fn image_messages(&self, acc: &str, ch: &str, limit: u32) -> StoreResult<Vec<Authored>> {
+        let db = self.db();
+        let mut st = db.prepare_cached(&format!(
+            "SELECT {MSG_COLS}, {AUTHOR_NAME}, u.avatar_url FROM messages m {AUTHOR_JOIN}
+             WHERE m.account_id = ?1 AND m.channel_id = ?2 AND m.deleted = 0 AND m.extra LIKE '%\"mime\":\"image/%'
+             ORDER BY m.ts DESC LIMIT ?3"
+        ))?;
+        let rows = st.query_map(params![acc, ch, limit], |r| read_authored(r))?;
+        let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+        // The pattern can match a link preview's text: keep messages with a real image file.
+        out.retain(|a| a.message.attachments.iter().any(|f| f.mime.starts_with("image/")));
+        Ok(out)
+    }
+
     /// Root message followed by its replies, oldest first.
     pub fn thread(&self, acc: &str, ch: &str, root: &str) -> StoreResult<Vec<Authored>> {
         let db = self.db();
@@ -1186,6 +1216,35 @@ mod tests {
         assert_eq!(older, vec!["1"]);
         let thread: Vec<String> = s.thread("a", "c", "1").unwrap().into_iter().map(|a| a.message.id).collect();
         assert_eq!(thread, vec!["1", "3"]);
+    }
+
+    #[test]
+    fn image_messages_newest_first() {
+        let s = temp_store();
+        let file = |mime: &str| Attachment {
+            id: "f".into(),
+            name: "f".into(),
+            mime: mime.into(),
+            size: 1,
+            url: "u".into(),
+            thumb_url: None,
+            width: None,
+            height: None,
+            path: None,
+        };
+        let with = |id: &str, ts: Millis, root: Option<&str>, mime: &str| Message { attachments: vec![file(mime)], ..msg(id, ts, root) };
+        let mut quoted = msg("5", 50, None);
+        quoted.text = r#"see "mime":"image/png""#.into();
+        s.upsert_messages(&[
+            with("1", 10, None, "image/png"),
+            with("2", 20, None, "application/pdf"),
+            with("3", 30, Some("1"), "image/jpeg"),
+            msg("4", 40, None),
+            quoted,
+        ])
+        .unwrap();
+        let ids: Vec<String> = s.image_messages("a", "c", 10).unwrap().into_iter().map(|a| a.message.id).collect();
+        assert_eq!(ids, vec!["3", "1"]);
     }
 
     #[test]

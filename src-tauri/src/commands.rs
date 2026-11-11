@@ -2,7 +2,7 @@
 //! they run on the Tokio runtime and never block the window thread.
 
 use crate::{login, popup, tray, AppState};
-use agora_core::engine::{ChannelDetailsView, ChannelView, HomeItem, MembersView, MessageView, PopupNote, ProfileView, SelfView, TodoView};
+use agora_core::engine::{CatchUp, ChannelDetailsView, ChannelView, HomeItem, MembersView, MessageView, PopupNote, ProfileView, SelfView, TodoView};
 use agora_core::model::{Account, AccountId, Canvas, ConnState, Millis, Presence, ServiceKind, Todo, User};
 use agora_core::settings::{ChannelPrefs, Settings};
 use agora_core::{secrets, store::Store};
@@ -83,6 +83,13 @@ pub async fn get_thread(
     root_id: String,
 ) -> CmdResult<Vec<MessageView>> {
     state.engine.thread(&account_id, &channel_id, &root_id).await
+}
+
+/// Every archived image of a conversation, newest first (Details, gallery).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn channel_images(state: State<'_, AppState>, account_id: String, channel_id: String) -> CmdResult<Vec<MessageView>> {
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || engine.channel_images(&account_id, &channel_id)).await.map_err(err)?
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -665,6 +672,18 @@ pub async fn home(state: State<'_, AppState>) -> CmdResult<Vec<HomeItem>> {
     state.engine.home()
 }
 
+/// `since`: a time, or none for "since each conversation was last read".
+#[tauri::command(rename_all = "snake_case")]
+pub async fn catch_up(state: State<'_, AppState>, since: Option<Millis>) -> CmdResult<CatchUp> {
+    state.engine.catch_up_summary(since)
+}
+
+/// `channels`: [account id, conversation id] pairs.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn mark_conversations_read(state: State<'_, AppState>, channels: Vec<(String, String)>) -> CmdResult<()> {
+    state.engine.mark_conversations_read(&channels)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn find_users(state: State<'_, AppState>, account_id: String, query: String) -> CmdResult<Vec<User>> {
     state.engine.find_users(&account_id, &query, 8)
@@ -806,7 +825,7 @@ pub async fn open_url(url: String) -> CmdResult<()> {
 
 /// Where downloaded attachments are kept (a cache: pruned at start, see `prune_files`).
 fn files_dir(app: &AppHandle) -> CmdResult<std::path::PathBuf> {
-    Ok(app.path().app_cache_dir().map_err(err)?.join("files"))
+    crate::storage::files_dir(app)
 }
 
 /// A file's bytes for the PDF viewer, through the same cache as pictures.
@@ -816,16 +835,50 @@ pub async fn read_file(app: AppHandle, account_id: String, path: String) -> CmdR
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// What `open_attachment` did, for its toast.
+#[derive(Serialize)]
+pub struct Opened {
+    pub bytes: u64,
+    /// Downloaded just now (otherwise opened from an earlier download).
+    pub downloaded: bool,
+}
+
 /// Downloads an attachment signed in (no web login) and opens it with the default app.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn open_attachment(app: AppHandle, state: State<'_, AppState>, account_id: String, path: String, name: String) -> CmdResult<()> {
+pub async fn open_attachment(app: AppHandle, state: State<'_, AppState>, account_id: String, path: String, name: String) -> CmdResult<Opened> {
     let dir = files_dir(&app)?;
-    let file = state.engine.download_file(&account_id, &path, &name, &dir).await?;
+    let (file, downloaded) = state.engine.download_file(&account_id, &path, &name, &dir).await?;
     // Only files Agora itself saved, in its own cache folder.
     if !file.starts_with(&dir) {
         return Err("not an Agora download".into());
     }
-    open_with_system(file.as_os_str())
+    open_with_system(file.as_os_str())?;
+    Ok(Opened { bytes: std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0), downloaded })
+}
+
+/// Disk space by kind (Settings → Privacy & storage), measured off the window thread.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn storage_usage(app: AppHandle, state: State<'_, AppState>) -> CmdResult<crate::storage::Usage> {
+    let data_dir = state.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::storage::usage(&app, &data_dir)).await.map_err(err)?
+}
+
+/// `what`: "download" (with `id`), "downloads", "cache" (with `id` a kind, or none for all),
+/// "legacy" (the Armos leftovers), or "webview" (cleared at a restart, done right away).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn free_storage(app: AppHandle, state: State<'_, AppState>, what: String, id: Option<String>) -> CmdResult<()> {
+    use crate::storage;
+    match what.as_str() {
+        "download" => storage::delete_downloads(&app, Some(id.as_deref().unwrap_or_default())),
+        "downloads" => storage::delete_downloads(&app, None),
+        "cache" => storage::clear_cache(&app, id.as_deref()),
+        "legacy" => storage::delete_legacy(&app),
+        "webview" => {
+            storage::clear_webview_next_start(&state.data_dir)?;
+            app.restart()
+        }
+        _ => Err(format!("unknown storage kind: {what}")),
+    }
 }
 
 /// Removes downloads older than a week, so the cache does not grow without end.

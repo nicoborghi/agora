@@ -76,6 +76,7 @@ export const settingsOpen = () => overlay().classList.contains('full') && !overl
 
 export function openSettings(section) {
   if (section) current = section;
+  Object.assign(storage, { usage: null, confirm: null });
   const ov = overlay();
   ov.className = 'full';
   ov.hidden = false;
@@ -277,10 +278,10 @@ const VIEWS = {
         : 'This build was compiled without SQLCipher.',
         `<input type="checkbox" class="switch" data-act="encrypt" ${s.db_encrypted ? 'checked' : ''} ${s.cipher_available ? '' : 'disabled'}>`)}
       ${opt('Keep versions before edits', 'Stores the old text when a message is edited. Off by default: check your workspace policy first.', toggle('keep_edit_history'))}
-      ${opt('Image cache limit', 'Downloaded images, avatars and custom emoji.', `<input type="number" min="0.1" step="0.1" style="width:70px" data-gb value="${(s.image_cache_mb / 1024).toFixed(1)}"> GB`)}
       ${opt('Data folder', esc(s.data_dir), '')}
       <div class="example">The archive keeps every message received since installation, including other people's messages.
-        Follow each workspace's retention and confidentiality rules before keeping it.</div>`;
+        Follow each workspace's retention and confidentiality rules before keeping it.</div>
+      ${storageView()}`;
   },
 
   advanced: () => `<h2>Advanced</h2>
@@ -297,6 +298,105 @@ const VIEWS = {
     ${opt('Version', esc(S.settings.version), '<button class="btn" data-act="whats-new">What\'s new</button>')}
     ${opt('Credits', 'Emoji: Noto Color Emoji by Google (SIL Open Font License). PDFs: Mozilla PDF.js (Apache License 2.0).', '')}`,
 };
+
+// ------------------------------------------------------------ storage
+
+// Measured when Privacy & storage opens (and after freeing space); `confirm`: the action
+// waiting for its Yes.
+const storage = { usage: null, loading: false, confirm: null };
+const CACHE_KINDS = { images: 'Pictures', pdfs: 'PDFs', videos: 'Videos', audio: 'Audio', other: 'Other' };
+
+/** Sizes as the system's file manager shows them (1 KB = 1024 bytes). */
+export function fmtBytes(n) {
+  const units = ['bytes', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return i === 0 ? `${n} bytes` : `${n >= 10 || i < 2 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
+}
+
+async function loadStorage() {
+  storage.loading = true;
+  try {
+    storage.usage = await invoke('storage_usage');
+  } catch (e) {
+    toast(String(e));
+  }
+  storage.loading = false;
+  if (settingsOpen() && current === 'privacy') render();
+}
+
+/** A button that frees space: the first click asks, in place, how much and whether to go on. */
+function freeButton(what, id, bytes, label, verb = 'Delete') {
+  const k = `${what}:${id || ''}`;
+  if (storage.confirm === k) {
+    return `<span class="st-confirm">${verb} ${fmtBytes(bytes)}?
+      <button class="btn danger" data-act="free-yes" data-what="${what}" data-id="${esc(id || '')}" data-bytes="${bytes}">Yes, ${verb.toLowerCase()}</button>
+      <button class="btn" data-act="free-no">Cancel</button></span>`;
+  }
+  return `<button class="btn" data-act="free" data-k="${esc(k)}">${label}</button>`;
+}
+
+function storageView() {
+  const u = storage.usage;
+  if (!u) {
+    if (!storage.loading) loadStorage();
+    return '<h3>Storage</h3><p class="muted">Measuring...</p>';
+  }
+  const downloads = u.downloads.reduce((n, d) => n + d.bytes, 0);
+  const cache = u.cache.reduce((n, c) => n + c.bytes, 0);
+  const parts = [
+    ['archive', 'Message archive', u.archive],
+    ['downloads', 'Downloaded files', downloads],
+    ['cache', 'Cache', cache],
+    ...(u.webview !== null ? [['webview', 'Webview cache', u.webview]] : []),
+    ...(u.legacy ? [['legacy', 'Old data from Armos', u.legacy]] : []),
+  ];
+  const total = parts.reduce((n, [, , b]) => n + b, 0);
+  const bar = parts.filter(([, , b]) => b > 0).map(([k, l, b]) =>
+    `<i class="st-${k}" style="flex-grow:${b}" title="${esc(l)}: ${fmtBytes(b)}"></i>`).join('');
+  const row = (k, label, hint, bytes, action = '', more = '') => `<div class="st-row">
+      <span class="st-dot st-${k}"></span><div class="st-what"><b>${label}</b><div class="hint">${hint}</div>${more}</div>
+      <span class="st-size">${fmtBytes(bytes)}</span><div class="st-act">${action}</div></div>`;
+  const day = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
+
+  const files = u.downloads.length ? `<div class="st-items">${u.downloads.map((d) => `<div class="st-item">
+      <span class="st-name" title="${esc(d.name)}">${esc(d.name)}</span><span class="muted">${day(d.modified)}</span>
+      <span class="st-size">${fmtBytes(d.bytes)}</span>${freeButton('download', d.id, d.bytes, 'Delete')}</div>`).join('')}</div>` : '';
+  const kinds = u.cache.filter((c) => c.count);
+  const cacheItems = kinds.length ? `<div class="st-items">${kinds.map((c) => `<div class="st-item">
+      <span class="st-name">${CACHE_KINDS[c.kind]}</span><span class="muted">${c.count} ${c.count === 1 ? 'file' : 'files'}</span>
+      <span class="st-size">${fmtBytes(c.bytes)}</span>${freeButton('cache', c.kind, c.bytes, 'Clear', 'Clear')}</div>`).join('')}</div>` : '';
+  const s = S.settings;
+
+  return `<h3>Storage</h3>
+    <div class="st-total"><b>${fmtBytes(total)}</b> used by Agora on this computer
+      <button class="btn" data-act="storage-refresh">${icon('refresh')} Measure again</button></div>
+    <div class="st-bar">${bar}</div>
+    ${row('archive', 'Message archive', 'Every message received, in all workspaces. To delete a workspace\'s messages, remove it in Accounts and choose "Delete archive too".', u.archive)}
+    ${row('downloads', 'Downloaded files', 'Attachments you opened. Removed by themselves 7 days after downloading.', downloads,
+      u.downloads.length > 1 ? freeButton('downloads', '', downloads, 'Delete all') : '', files)}
+    ${row('cache', 'Cache', 'Pictures, avatars, emoji and previews already downloaded, so they show at once. They are downloaded again when needed.', cache,
+      kinds.length > 1 ? freeButton('cache', '', cache, 'Clear all', 'Clear') : '',
+      `${cacheItems}<div class="st-limit">Limit <input type="number" min="0.1" step="0.1" style="width:70px" data-gb value="${(s.image_cache_mb / 1024).toFixed(1)}"> GB: the oldest go first when it is full.</div>`)}
+    ${u.webview !== null ? row('webview', 'Webview cache', 'The built-in browser\'s own copies of pictures and pages. Cleared when Agora restarts; your sign-ins stay.', u.webview,
+      u.webview ? freeButton('webview', '', u.webview, 'Clear and restart', 'Clear') : '') : ''}
+    ${u.legacy ? row('legacy', 'Old data from Armos', 'Folders from before Agora was renamed. Your messages and settings were moved to Agora already.', u.legacy,
+      freeButton('legacy', '', u.legacy, 'Delete')) : ''}`;
+}
+
+async function freeStorage(what, id, bytes) {
+  storage.confirm = null;
+  if (what === 'webview') toast('Agora restarts to clear its webview cache...', 8000);
+  try {
+    await invoke('free_storage', { what, id: id || null });
+  } catch (e) {
+    toast(String(e), 6000);
+    loadStorage();
+    return;
+  }
+  toast(`${fmtBytes(Number(bytes))} freed`);
+  loadStorage();
+}
 
 function render() {
   if (!VIEWS[current]) current = 'accounts';
@@ -425,7 +525,13 @@ function bind(ov) {
   ov.addEventListener('click', async (e) => {
     if (!settingsOpen()) return;
     const sec = e.target.closest('[data-sec]');
-    if (sec) { current = sec.dataset.sec; render(); return; }
+    if (sec) {
+      current = sec.dataset.sec;
+      // Sizes are measured afresh each time the section opens.
+      if (current === 'privacy') Object.assign(storage, { usage: null, confirm: null });
+      render();
+      return;
+    }
     // Level buttons: global defaults, or per workspace (where "Default" clears the override).
     const lv = e.target.closest('.seg[data-level] button');
     if (lv) {
@@ -473,6 +579,10 @@ function bind(ov) {
         break;
       }
       case 'panel-close': accPanel = { id: null, kind: null }; render(); break;
+      case 'storage-refresh': storage.usage = null; storage.confirm = null; render(); break;
+      case 'free': storage.confirm = b.dataset.k; render(); break;
+      case 'free-no': storage.confirm = null; render(); break;
+      case 'free-yes': freeStorage(b.dataset.what, b.dataset.id, b.dataset.bytes); break;
       case 'logo-pick': changeLogo(b.closest('.acc-card'), 'pick'); break;
       case 'logo-service': changeLogo(b.closest('.acc-card'), 'service'); break;
       case 'relogin': relogin(b.closest('.acc-card').dataset.id); break;

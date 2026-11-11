@@ -28,13 +28,13 @@
 
 Agora is not a wrapper that stacks web apps in different tabs. It talks to each service through its API, turns everything into one data model, and provides new features:
 
-- **One Home for everything.** Workspace cards with new messages and mentions. *All conversations* from every workspace in one sidebar.
+- **One Home for everything.** Workspace cards with new messages and mentions, and a *Catch-up* of what is for you since you last looked. *All conversations* from every workspace in one sidebar.
 - **Your history, searchable across every service.** Every message received is kept in a local, encrypted archive (SQLCipher, key in the system's secret store): readable and searchable across all services at once, even offline. *Search on the server* reaches back further (depending on the service).
-- **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, and the taskbar shows a dot in each workspace's colour.
+- **Fine-tunable notifications.** Three levels (Alert, Dot, Silent) set in layers: a default for  direct messages and channels, per workspace, overridden again per conversation. Quiet hours hold everything back, focus mode silences everything at once, and the taskbar shows a dot in each workspace's colour.
 - **Organise across services.** Your own groups can mix a Slack channel, a Mattermost team and a Rocket.Chat room. Favourites sync both ways where the service allows it, and bookmarks collect messages from every workspace on one page.
 - **Unified writing experience.** Markdown toolbar and shortcuts, @mention and :emoji: completion, paste or drop images, a built-in image editor (crop, arrows, highlights, text), a preview of what others will see, and a draft kept for each conversation.
 - **Threads you can follow.** Replies show in the conversation with what they answer; notifications open the reply in its thread; replies can also go to the conversation.
-- **Files and links that just work.** Any attachment opens in your usual app without a web login; copy a link to any message; mark messages unread to come back to them.
+- **Files and links that just work.** Any attachment opens in your usual app without a web login; copy a link to any message; mark messages unread to come back to them; browse every image of a conversation in a gallery with a timeline.
 - **One to-do list for every workspace.** Put any message on it from its hover bar, or type your own. Priority, due date with the days left, projects and notes; done items are kept.
 - **Light on your PC.** One native shell (Rust + Tauri, WebView2) instead of one Electron app per service: about 100 MB of memory with several workspaces, no framework, no per-service browser.
 
@@ -267,7 +267,7 @@ cross-service search with dates, notification levels and quiet hours, groups, pr
 editor, themes and accent colours, automated releases, signed self-updates, bookmarks, drafts, macOS and
 Ubuntu builds, files opened without a web login, message links, mark as unread, new direct messages, workspace
 emoji, start at login, single instance, an image cache with a size limit, a "What's new" window after updates,
-a to-do list across workspaces.
+a to-do list across workspaces, a catch-up summary, focus mode, an image gallery with a timeline, a storage breakdown.
 
 Next: smoother redrawing of busy conversations (only what changed), Slack canvases on real workspaces (images
 inside canvases), pinned messages for Mattermost and Rocket.Chat.

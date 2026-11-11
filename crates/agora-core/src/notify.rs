@@ -67,6 +67,11 @@ pub fn decide(i: &NotifyInput) -> Decision {
         }
     }
 
+    // Focus mode: nothing gets through, not even direct messages or mentions.
+    if s.focus {
+        popup = false;
+    }
+
     let sound_name = i.prefs.sound.as_deref().unwrap_or(&s.sound);
     Decision { popup, tray_dot, sound: popup && sound_name != "none", keyword }
 }
@@ -136,6 +141,15 @@ mod tests {
         let p = ChannelPrefs { level: Some(Level::Alert), tray: Some(false), ..Default::default() };
         let d = decide(&input(&s, &p, "x"));
         assert!(d.popup && !d.tray_dot);
+    }
+
+    #[test]
+    fn focus_blocks_everything() {
+        let mut s = NotificationSettings { focus: true, ..Default::default() };
+        s.keywords.push(Keyword { word: "urgent".into(), accounts: vec![] });
+        let p = ChannelPrefs { level: Some(Level::Alert), ..Default::default() };
+        let d = decide(&NotifyInput { is_direct: true, mentions_me: true, ..input(&s, &p, "urgent") });
+        assert!(!d.popup && !d.sound && d.tray_dot);
     }
 
     #[test]

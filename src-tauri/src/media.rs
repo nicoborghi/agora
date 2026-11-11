@@ -97,6 +97,13 @@ fn store(file: &Path, mime: &str, bytes: &[u8], limit: u64) {
     }
 }
 
+/// After files were removed from the cache folder (Settings): counts it again.
+pub fn recount(dir: &Path) {
+    if let Some(total) = CACHED.get() {
+        total.store(folder_size(dir), Ordering::Relaxed);
+    }
+}
+
 fn folder_size(dir: &Path) -> u64 {
     std::fs::read_dir(dir).map(|d| d.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum()).unwrap_or(0)
 }

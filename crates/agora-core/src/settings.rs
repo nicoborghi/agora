@@ -84,6 +84,8 @@ pub struct NotificationSettings {
     pub keywords_override: bool,
     pub keywords: Vec<Keyword>,
     pub dnd: Dnd,
+    /// Focus mode (the bell above Settings): no popups and no sounds at all, until turned off.
+    pub focus: bool,
     /// Per-workspace defaults that replace `dm_level` / `channel_level` for that account.
     /// A conversation's own level still wins.
     pub accounts: HashMap<AccountId, AccountLevels>,
@@ -120,6 +122,7 @@ impl Default for NotificationSettings {
             keywords_override: true,
             keywords: Vec::new(),
             dnd: Dnd::default(),
+            focus: false,
             accounts: HashMap::new(),
         }
     }
