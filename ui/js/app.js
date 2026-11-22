@@ -34,6 +34,9 @@ export const S = {
   editing: null, // { a, c, id }
   previewOn: false,
   newSince: null, // last-read time when the open conversation was opened with news
+  threadSince: null, // last-read time of the open conversation when opened: thread replies after it are new
+  seenThreads: new Map(), // thread root -> newest reply seen in its panel during this visit
+  seenBars: new Set(), // unread markers looked at during this visit (they fade, then stay off)
   stick: true, // the message list follows the bottom
   bookmarks: new Set(), // bkey() of bookmarked messages
   bookmarkList: [], // the bookmarked messages, newest bookmark first
@@ -264,6 +267,8 @@ function onMessage(m) {
     const i = p.messages.findIndex((x) => x.id === m.id);
     if (i >= 0) p.messages[i] = m;
     else p.messages.push(m);
+    // A reply arriving in the open thread is read there.
+    if (m.thread_root === p.root) S.seenThreads.set(p.root, Math.max(S.seenThreads.get(p.root) ?? 0, m.ts));
     schedule('panel');
   }
 }
@@ -702,6 +707,10 @@ async function openChannel(a, c) {
   // With news, open at the first unread message (everything after it is highlighted);
   // otherwise at the newest. Read before open_channel, which marks the conversation read.
   S.newSince = isUnread(ch) && ch.last_read > 0 ? ch.last_read : null;
+  // Thread replies do not make a conversation unread: those since the last visit are new.
+  S.threadSince = ch.last_read > 0 ? ch.last_read : null;
+  S.seenThreads = new Map();
+  S.seenBars = new Set();
   schedule('header', 'sidebar', 'rail', 'panel', 'typing', 'messages', 'me', 'home');
   invoke('open_channel', { account_id: a, channel_id: c });
   const token = ++S.openToken;
@@ -1403,12 +1412,17 @@ const fileKind = (name) => (/\.([a-z0-9]{1,5})$/i.exec(name || '')?.[1] || 'file
 function attachmentsHtml(m) {
   if (!m.attachments?.length) return '';
   return `<div class="attachments">${m.attachments.map((f) => ((f.mime || '').startsWith('image/')
-    ? `<img src="${esc(f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`
+    // A GIF's thumbnail is a still frame: the file itself is shown, so it moves.
+    ? `<img src="${esc(isGif(f) ? f.url : f.thumb_url || f.url)}" data-full="${esc(f.url)}" alt="${esc(f.name)}" loading="lazy">`
     : `<button class="file-card" data-file="${esc(filePath(f, m.account_id))}" data-mime="${esc(f.mime || '')}" data-name="${esc(f.name)}" data-href="${esc(f.url)}" title="Open ${esc(f.name)}">
         ${f.thumb_url ? `<img class="file-thumb" src="${esc(f.thumb_url)}" alt="" loading="lazy">` : pdfThumbHtml(f, m.account_id)}
         <span class="file-line"><span class="file-kind">${esc(fileKind(f.name))}</span><span class="file-name">${esc(f.name)}</span>
         <span class="file-size">${esc(fmtSize(f.size))}</span></span></button>`)).join('')}</div>`;
 }
+
+/** An animated picture: a .gif file, or one from a GIF site. */
+const GIF_RE = /\.gif($|[?#])/i;
+const isGif = (f) => f.mime === 'image/gif' || GIF_RE.test(f.name || '') || GIF_RE.test(f.url || '');
 
 /**
  * The service path to download a file through Agora. Messages archived before 0.3.0 have none:
@@ -1538,15 +1552,17 @@ function namedChannelRefs(html, acc) {
   });
 }
 
-/** `quoted`: the message this reply answers is already shown just above (by the run). */
-function messageHtml(m, grouped, inThread, quoted = false) {
+/**
+ * `quoted`: the message this reply answers is already shown just above. `replies`: the loaded
+ * replies of the thread this message starts (main view), for its summary line.
+ */
+function messageHtml(m, grouped, inThread, quoted = false, replies = null) {
   // Rendered once per message object: an edit or reaction arrives as a new object.
   let body = m.deleted ? '<span class="deleted">Message deleted</span>' : (m._html ??= namedChannelRefs(renderMarkdown(m.text, m.account_id), m.account_id));
   let edited = m.edited_at && !m.deleted ? '<span class="edited">(edited)</span>' : '';
   // Keep the label on the last line of text instead of a line of its own.
   if (edited && body.endsWith('</p>')) { body = `${body.slice(0, -4)}${edited}</p>`; edited = ''; }
-  const replies = !inThread && m.reply_count
-    ? `<button class="replies" data-act="thread">${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}</button>` : '';
+  const summary = inThread ? '' : threadSummaryHtml(m, replies || []);
   const reply = !inThread && m.thread_root;
   const ctx = reply && !quoted ? replyContextHtml(m) : '';
   return `<div class="msg ${reply ? 'reply' : ''} ${grouped ? 'cont' : ''} ${S.editing?.id === m.id ? 'editing' : ''} ${S.bookmarks.has(bkey(m)) ? 'bookmarked' : ''} ${S.flash === m.id ? 'flash' : ''} ${S.openCode.has(m.id) ? 'code-open' : ''}" data-id="${esc(m.id)}">
@@ -1554,7 +1570,7 @@ function messageHtml(m, grouped, inThread, quoted = false) {
     <div class="msg-main">
       ${grouped ? '' : `<div class="msg-head"><b class="author"${personAttrs(m)}>${esc(m.author_name)}</b><time title="${esc(new Date(m.ts).toLocaleString())}">${fmtTime(m.ts)}</time></div>`}
       ${ctx}<div class="msg-body">${body}${edited}</div>
-      ${attachmentsHtml(m)}${linksHtml(m)}${reactionsHtml(m)}${replies}
+      ${attachmentsHtml(m)}${linksHtml(m)}${reactionsHtml(m)}${summary}
     </div>${toolsHtml(m, inThread)}</div>`;
 }
 
@@ -1565,21 +1581,95 @@ function replyContextHtml(m) {
   return `<button class="reply-ctx" data-act="goto-root" data-root="${esc(m.thread_root)}" title="Go to the message and its thread">${icon('reply')}<span>${what}</span></button>`;
 }
 
-/** Replies that stay in their thread: one line per run of replies to the same message. */
-function threadNoteHtml(run, newSince = null) {
-  const last = run[run.length - 1];
-  const me = account(last.account_id)?.self_user_id;
-  const fresh = newSince !== null && run.some((m) => m.ts > newSince && !m.is_self);
-  const mention = run.some((m) => m.mentions?.includes(me));
-  const names = [...new Set(run.map((m) => m.author_name))];
-  const who = names.length > 2 ? `${esc(names[0])} and ${names.length - 1} others` : names.map(esc).join(' and ');
-  const what = run.length > 1
-    ? `<b>${who}</b> ${run.length} replies · last: <span class="tn-text">${esc(stripPreview(last.text))}</span>`
-    : `<b>${who}</b>: <span class="tn-text">${esc(stripPreview(last.text))}</span>`;
-  const r = last.reply_to;
-  const on = r && !r.deleted ? `In <b>${esc(r.author_name)}</b>'s “${esc(r.text.slice(0, 60))}${r.text.length > 60 ? '…' : ''}” · ` : 'In a thread · ';
-  return `<button class="thread-note ${fresh ? 'fresh' : ''} ${mention ? 'mention' : ''}" data-act="goto-root" data-root="${esc(last.thread_root)}" data-id="${esc(last.id)}" title="Go to the message and its thread">
-    ${icon('reply')}<span class="tn-line"><span class="tn-on">${on}</span>${what}</span><time>${fmtTime(last.ts)}</time><span class="tn-up">↑</span></button>`;
+/** The message mentions you. */
+const forMe = (m) => !!m.mentions?.includes(account(m.account_id)?.self_user_id);
+
+/**
+ * A thread reply you have not seen: newer than your last visit to the conversation (replies
+ * do not make it unread) and than your last look at its thread during this visit.
+ */
+function replyIsNew(m) {
+  if (m.is_self || S.threadSince === null || S.seenBars.has(m.id)) return false;
+  return m.ts > Math.max(S.threadSince, S.seenThreads.get(m.thread_root) ?? 0);
+}
+
+/**
+ * Whether a reply is a row of the conversation: only when it was also sent there on purpose
+ * (Slack, Rocket.Chat). Mattermost marks every reply so, which would flood the conversation.
+ */
+const replyInChat = (m) => m.in_channel && account(m.account_id)?.kind !== 'mattermost';
+
+/** Loaded thread replies, by thread, oldest first. */
+function repliesByThread(list) {
+  const map = new Map();
+  for (const m of list) {
+    if (!m.thread_root) continue;
+    if (!map.has(m.thread_root)) map.set(m.thread_root, []);
+    map.get(m.thread_root).push(m);
+  }
+  return map;
+}
+
+/** The key of a thread line's unread marker: it changes, and the marker returns, with each new reply. */
+const sumKey = (root, fresh) => `t:${root}:${fresh[fresh.length - 1].ts}`;
+
+let unreadObservers = new Map(); // container -> IntersectionObserver
+/**
+ * Unread markers fade once seen: on screen for a moment while Agora is in front. Called after
+ * each redraw of the conversation or the thread panel.
+ */
+function watchUnread(box) {
+  unreadObservers.get(box)?.disconnect();
+  const marks = box.querySelectorAll('[data-uk]');
+  if (!marks.length) { unreadObservers.delete(box); return; }
+  const obs = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      clearTimeout(e.target._fade);
+      if (e.isIntersecting) e.target._fade = setTimeout(() => fadeUnread(e.target, obs), 1500);
+    }
+  }, { threshold: 0.4 });
+  marks.forEach((el) => obs.observe(el));
+  unreadObservers.set(box, obs);
+}
+
+function fadeUnread(el, obs) {
+  if (!el.isConnected) return;
+  if (document.hidden || !document.hasFocus()) { el._fade = setTimeout(() => fadeUnread(el, obs), 1500); return; }
+  S.seenBars.add(el.dataset.uk);
+  obs.unobserve(el);
+  el.classList.add('read-now');
+  // Replies read in a thread's box count as read: once the bar has faded, the count drops and
+  // the next new replies show.
+  if (el.dataset.seen) {
+    el.dataset.seen.split(' ').forEach((id) => S.seenBars.add(id));
+    setTimeout(() => schedule('messages'), 1200);
+  }
+  updateChatToast();
+}
+
+/**
+ * The one line a thread has in the conversation, under its first message: how many replies,
+ * how many new, and the latest reply in full (the two latest when both are new).
+ */
+function threadSummaryHtml(m, replies) {
+  const count = Math.max(m.reply_count || 0, replies.length);
+  if (!count) return '';
+  const fresh = replies.filter(replyIsNew);
+  const me = fresh.some(forMe);
+  const last = replies[replies.length - 1];
+  // A reading queue: the oldest new replies, in order. Once seen they count as read and the
+  // next ones take their place; with nothing new, the latest reply.
+  const shown = fresh.length ? fresh.slice(0, 3) : last ? [last] : [];
+  const lines = shown.map((r) => `<div class="ts-reply"><b>${esc(r.author_name)}</b><span>${esc(stripPreview(r.text) || (r.attachments?.length ? 'sent a file' : ''))}</span></div>`).join('');
+  const more = fresh.length - (fresh.length ? shown.length : 0);
+  const uk = fresh.length ? `t:${m.id}:${shown.map((r) => r.id).join(',')}` : '';
+  const bar = uk && !S.seenBars.has(uk);
+  const seen = bar ? ` data-uk="${esc(uk)}" data-seen="${esc(shown.map((r) => r.id).join(' '))}"` : '';
+  return `<div class="thread-sum ${bar ? 'unread' : ''} ${me && bar ? 'me' : ''}"${seen} data-act="thread" role="button" tabindex="0" title="Open the thread">
+    <div class="ts-top">${icon('reply')}<b>${count} ${count === 1 ? 'reply' : 'replies'}</b>
+      ${fresh.length ? `<span class="ts-new">${fresh.length} new</span>` : ''}${me ? '<span class="ts-me">@you</span>' : ''}
+      ${last ? `<time>${fmtTime(last.ts)}</time>` : ''}</div>
+    ${lines}${more > 0 ? `<div class="ts-more">${more} more new: they show here as you read</div>` : ''}</div>`;
 }
 
 /** First line of Markdown as plain text, for one-line previews. */
@@ -1587,18 +1677,20 @@ function stripPreview(text) {
   return String(text || '').replace(/```[\s\S]*?(```|$)/g, ' [code] ').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
-/** `newSince` (main view only): messages from others after this time are new since the last visit. */
+/**
+ * `newSince`: messages from others after this time are new (in a thread, its replies). New
+ * messages look the same everywhere: a "New" line above the first, a bar on the left of each.
+ */
 function messagesHtml(list, inThread, newSince = null) {
+  const threads = inThread ? null : repliesByThread(list);
   let out = '';
   let prev = null;
   let day = '';
   let dividerShown = false;
-  let run = [];
-  const flushRun = () => { if (run.length) { out += threadNoteHtml(run, newSince); run = []; prev = null; } };
   for (const m of list) {
+    // A reply that stays in its thread is summed up under the thread's first message.
+    if (!inThread && m.thread_root && !replyInChat(m)) continue;
     const d = new Date(m.ts).toDateString();
-    const note = !inThread && m.thread_root && !m.in_channel;
-    if (!note || d !== day || (run.length && run[0].thread_root !== m.thread_root)) flushRun();
     if (d !== day) {
       // Each day is a group, so its date line stays pinned at the top only while that day is
       // on screen. Today's line scrolls normally.
@@ -1609,23 +1701,74 @@ function messagesHtml(list, inThread, newSince = null) {
       day = d;
       prev = null;
     }
-    const fresh = newSince !== null && m.ts > newSince;
-    if (fresh && !dividerShown && !m.is_self) {
-      out += '<div class="new-divider"><span>New messages</span></div>';
+    const fresh = newSince !== null && m.ts > newSince && !m.is_self;
+    const bar = fresh && !S.seenBars.has(m.id);
+    if (fresh && !dividerShown) {
+      out += '<div class="new-divider"><span>New</span></div>';
       dividerShown = true;
       prev = null;
     }
-    if (note) { run.push(m); continue; }
     const reply = m.thread_root && !inThread;
     const sameThread = reply && prev && (prev.thread_root === m.thread_root || prev.id === m.thread_root);
+    // A message whose thread line is shown closes the group: the next one starts with its name.
     const grouped = prev && prev.author_id === m.author_id && m.ts - prev.ts < 5 * 60e3 && !prev.deleted && !m.deleted
-      && (!reply || prev.thread_root === m.thread_root) && !(prev.thread_root && !inThread && !reply);
-    const html = messageHtml(m, grouped, inThread, sameThread);
-    out += dividerShown && fresh ? html.replace('class="msg ', 'class="msg fresh ') : html;
+      && (!reply || prev.thread_root === m.thread_root) && !(prev.thread_root && !inThread && !reply)
+      && !(!inThread && (prev.reply_count || threads.has(prev.id)));
+    const html = messageHtml(m, grouped, inThread, sameThread, threads?.get(m.id));
+    out += bar ? html.replace('class="msg ', `data-uk="${esc(m.id)}" class="msg unread ${forMe(m) ? 'me ' : ''}`) : html;
     prev = m;
   }
-  flushRun();
   return !inThread && day ? `${out}</section>` : out;
+}
+
+/** Threads of the open conversation with replies you have not seen, latest first. */
+function threadsWithNews() {
+  const out = [];
+  for (const [root, replies] of repliesByThread(S.messages)) {
+    const fresh = replies.filter(replyIsNew);
+    if (fresh.length) out.push({ root, key: sumKey(root, fresh), me: fresh.some(forMe), last: fresh[fresh.length - 1].ts });
+  }
+  return out.sort((x, y) => (Number(y.me) - Number(x.me)) || (y.last - x.last));
+}
+
+/** Threads with replies you have not read (in their box or their panel). */
+const threadsToSee = () => (S.open ? threadsWithNews() : []);
+
+/**
+ * A floating note at the top of the conversation for news out of sight: new messages further
+ * up, and threads with new replies (their line is under their first message, maybe far up).
+ */
+function updateChatToast() {
+  const el = $('#chat-toast');
+  const box = $('#messages');
+  if (!el) return;
+  const parts = [];
+  const div = S.open && box.querySelector('.new-divider');
+  if (div && div.getBoundingClientRect().bottom < box.getBoundingClientRect().top) parts.push('<button data-t="new">↑ New messages</button>');
+  const threads = threadsToSee();
+  if (threads.length) {
+    parts.push(`<button data-t="threads" class="${threads.some((t) => t.me) ? 'me' : ''}">${icon('reply')}New replies in ${threads.length} ${threads.length === 1 ? 'thread' : 'threads'}</button>`);
+  }
+  el.hidden = !parts.length;
+  el.innerHTML = parts.join('');
+  el.style.top = `${box.offsetTop + 8}px`;
+}
+
+function onChatToastClick(e) {
+  const b = e.target.closest('[data-t]');
+  if (!b || !S.open) return;
+  const box = $('#messages');
+  if (b.dataset.t === 'new') {
+    const div = box.querySelector('.new-divider');
+    if (div) box.scrollTo({ top: box.scrollTop + div.getBoundingClientRect().top - box.getBoundingClientRect().top - 40, behavior: 'smooth' });
+    return;
+  }
+  const t = threadsToSee()[0];
+  if (!t) return;
+  const root = S.messages.find((x) => x.id === t.root);
+  // Its first message is shown with the thread's line; when it is too far back, the thread opens.
+  if (root) jumpTo(S.open.a, S.open.c, root.id, root);
+  else { S.seenBars.add(t.key); openThread(t.root); }
 }
 
 /**
@@ -1634,20 +1777,20 @@ function messagesHtml(list, inThread, newSince = null) {
  */
 function renderMessages(mode = false) {
   const box = $('#messages');
-  if (!S.open) { box.innerHTML = ''; return; }
+  if (!S.open) { box.innerHTML = ''; updateChatToast(); return; }
   box.innerHTML = (S.hasOlder && S.messages.length ? '<div class="loading-older">Scroll up for older messages</div>' : '') + messagesHtml(S.messages, false, S.newSince);
   if (mode === 'open') {
     const divider = box.querySelector('.new-divider');
     if (divider && divider.offsetTop > box.clientHeight / 2) {
       box.scrollTop = Math.max(0, divider.offsetTop - 48);
       S.stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-      return;
-    }
-    S.stick = true;
+    } else S.stick = true;
   }
   if (mode === true) S.stick = true;
   if (S.stick) box.scrollTop = box.scrollHeight;
   watchPdfThumbs(box);
+  watchUnread(box);
+  updateChatToast();
 }
 
 /** Keeps the view at the bottom while late content (pictures, previews) grows the list. */
@@ -2002,20 +2145,36 @@ function addFiles(list) {
     if (pending.length >= MAX_PENDING) { toast(`At most ${MAX_PENDING} files per message`); break; }
     if (f.size > MAX_FILE) { toast(`${f.name || 'File'} is larger than 25 MB`); continue; }
     const image = (f.type || '').startsWith('image/');
+    const gif = f.type === 'image/gif';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const name = f.name && f.name !== 'image.png' ? f.name : `screenshot-${stamp}.png`;
-    pending.push({ id: ++pendingSeq, name, blob: f, image, url: image ? URL.createObjectURL(f) : null });
+    pending.push({ id: ++pendingSeq, name, blob: f, image, gif, url: image ? URL.createObjectURL(f) : null });
   }
   renderTray();
+}
+
+/**
+ * A GIF copied from a web page reaches the clipboard as a still PNG plus the page's HTML: its
+ * link is pasted instead (services and Agora show the moving picture from it). True if done.
+ */
+function pasteGifLink(e, box) {
+  const html = e.clipboardData?.getData('text/html') || '';
+  const src = /<img[^>]+src="(https:[^"]+)"/i.exec(html)?.[1]?.replace(/&amp;/g, '&');
+  if (!src || !(GIF_RE.test(src) || /^https:\/\/([\w-]+\.)*(giphy\.com|tenor\.com)\//i.test(src))) return false;
+  e.preventDefault();
+  box.focus();
+  box.setRangeText(src, box.selectionStart, box.selectionEnd, 'end');
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
 }
 
 function renderTray() {
   const tray = $('#attach-tray');
   tray.hidden = !pending.length;
   tray.innerHTML = pending.map((p) => `<div class="att" data-id="${p.id}">
-      ${p.image ? `<img src="${esc(p.url)}" alt="" title="Double-click to edit">` : `<span class="file-ico">${icon('clip')}</span>`}
+      ${p.image ? `<img src="${esc(p.url)}" alt="" title="${p.gif ? 'GIF' : 'Double-click to edit'}">` : `<span class="file-ico">${icon('clip')}</span>`}
       <span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>
-      ${p.image ? `<button data-att="edit" title="Draw, highlight, add text, crop">${icon('edit')}</button>` : ''}
+      ${p.image && !p.gif ? `<button data-att="edit" title="Draw, highlight, add text, crop">${icon('edit')}</button>` : ''}
       <button data-att="remove" title="Remove">${icon('close')}</button></div>`).join('');
 }
 
@@ -2026,7 +2185,7 @@ function clearPending() {
 
 async function editPending(id) {
   const p = pending.find((x) => x.id === id);
-  if (!p?.image) return;
+  if (!p?.image || p.gif) return;
   // Always edit the original with the previous annotations, which stay movable and editable.
   p.original ||= p.blob;
   const out = await editImage(p.original, p.edits);
@@ -2169,13 +2328,21 @@ async function openThread(rootId, back = null) {
   if (!S.open) return;
   const { a, c } = S.open;
   invoke('thread_opened', { account_id: a, channel_id: c, root_id: rootId }).catch(() => {});
-  S.panel = { type: 'thread', a, c, root: rootId, messages: S.messages.filter((m) => m.id === rootId), back };
+  // Replies after `since` are marked new in the panel; from now on the thread counts as seen.
+  const since = S.threadSince === null ? null : Math.max(S.threadSince, S.seenThreads.get(rootId) ?? 0);
+  const seen = (list) => S.seenThreads.set(rootId,
+    list.reduce((t, m) => (m.thread_root === rootId ? Math.max(t, m.ts) : t), S.seenThreads.get(rootId) ?? 0));
+  seen(S.messages);
+  S.panel = { type: 'thread', a, c, root: rootId, messages: S.messages.filter((m) => m.id === rootId), back, since };
   renderPanel(true);
+  schedule('messages', 'header');
   try {
     const msgs = await invoke('get_thread', { account_id: a, channel_id: c, root_id: rootId });
     if (S.panel?.root !== rootId) return;
+    seen(msgs);
     S.panel.messages = msgs;
     renderPanel();
+    schedule('messages', 'header');
   } catch (e) {
     toast(String(e));
   }
@@ -2208,9 +2375,10 @@ function renderPanel(rebuild = false) {
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
     body.innerHTML = (root ? messagesHtml([root], true) : '')
       + (replies.length ? `<div class="thread-sep">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}</div>` : '')
-      + messagesHtml(replies, true);
+      + messagesHtml(replies, true, p.since);
     if (atBottom || rebuild) body.scrollTop = body.scrollHeight;
     watchPdfThumbs(body);
+    watchUnread(body);
   } else if (p.type === 'search') {
     renderSearch(el, rebuild);
   } else if (p.type === 'account' || p.type === 'notify') {
@@ -3543,6 +3711,9 @@ function bindUi() {
   box.addEventListener('contextmenu', reactorsMenu(false));
   $('#panel').addEventListener('contextmenu', reactorsMenu(true));
   box.addEventListener('scroll', loadOlder, { passive: true });
+  let toastFrame = 0;
+  box.addEventListener('scroll', () => { toastFrame ||= requestAnimationFrame(() => { toastFrame = 0; updateChatToast(); }); }, { passive: true });
+  $('#chat-toast').addEventListener('click', onChatToastClick);
   // Following the bottom stops when the reader scrolls up, and resumes at the bottom.
   box.addEventListener('scroll', () => { S.stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60; }, { passive: true });
   box.addEventListener('load', followBottom, true);
@@ -3640,6 +3811,7 @@ function bindUi() {
   });
   panel.addEventListener('paste', (e) => {
     if (e.target.id !== 'thread-input') return;
+    if (pasteGifLink(e, e.target)) return;
     const files = [...(e.clipboardData?.files || [])];
     if (!files.length || e.clipboardData.getData('text/plain')) return;
     e.preventDefault();
@@ -3689,6 +3861,7 @@ function bindUi() {
   });
   // Ctrl+V of a screenshot (or copied files): attach instead of pasting nothing.
   input.addEventListener('paste', (e) => {
+    if (pasteGifLink(e, input)) return;
     const files = [...(e.clipboardData?.files || [])];
     if (!files.length || e.clipboardData.getData('text/plain')) return;
     e.preventDefault();

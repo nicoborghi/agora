@@ -193,7 +193,6 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
   border-radius: 11px; font-size: 12px; }
 .reaction.mine { border-color: var(--accent); }
 .reaction:hover { background: var(--bg-3); }
-.replies { margin-top: 2px; color: var(--accent); font-size: 12px; font-weight: 600; }
 /* A reply shown in the channel: the message it answers, above it. */
 .reply-ctx { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: 1px 0 3px; padding: 2px 8px 2px 6px;
   border-left: 2px solid var(--line); font-size: 12px; color: var(--fg-2); text-align: left; }
@@ -201,22 +200,9 @@ svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-widt
 .reply-ctx b { color: var(--fg); font-weight: 600; }
 .reply-ctx:hover { border-left-color: var(--accent); color: var(--fg); }
 .reply-ctx .i { flex: none; width: 13px; height: 13px; }
-/* Replies that stay in their thread: one quiet line in the conversation. */
-.thread-note { display: flex; align-items: center; gap: 8px; width: calc(100% - 32px); margin: 2px 16px 2px 16px;
-  padding: 3px 8px 3px 44px; border-radius: var(--radius); font-size: 12px; color: var(--fg-2); text-align: left; }
-.thread-note:hover { background: var(--bg-2); color: var(--fg); }
-.thread-note .i { flex: none; width: 13px; height: 13px; color: var(--accent); margin-left: -22px; }
-.thread-note .tn-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.thread-note b { color: var(--fg); font-weight: 600; }
-.thread-note .tn-text { color: var(--fg); }
-.thread-note time { flex: none; font-size: 11px; color: var(--fg-2); }
 /* A reply shown in the main chat: a slim rail on the left ties the quote and the reply together. */
 .msg.reply .msg-main { border-left: 2px solid var(--line); padding-left: 10px; }
 .msg.reply .reply-ctx { border-left: 0; padding-left: 0; }
-.thread-note .tn-up { flex: none; color: var(--accent); font-weight: 600; opacity: .6; }
-.thread-note:hover .tn-up { opacity: 1; }
-.thread-note.fresh { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.thread-note.mention { box-shadow: inset 2px 0 0 var(--accent); }
 .home-item .in-thread { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; font-weight: 400; color: var(--fg-2); font-size: 11px; }
 .home-item .in-thread .i { width: 11px; height: 11px; }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -657,11 +643,6 @@ body.home-mode #sidebar, body.home-mode .resizer[data-target="sidebar"] { displa
 .tp b.short { width: 60%; }
 .tp b.bubble { height: 14px; width: 80%; background: color-mix(in srgb, var(--tfg) 12%, transparent); }
 
-/* Opening a conversation with news: a divider at the first new message, new ones slightly brighter */
-.new-divider { display: flex; align-items: center; gap: 10px; margin: 10px 16px 4px; color: var(--accent); font-size: 11px; font-weight: 600; }
-.new-divider::before, .new-divider::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
-.msg.fresh { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.msg.fresh:hover { background: color-mix(in srgb, var(--accent) 11%, transparent); }
 
 /* Sidebar badges: bigger and easier to read. */
 .row .badge { min-width: var(--sb-badge); height: var(--sb-badge); padding: 0 6px; border-radius: calc(var(--sb-badge) / 2);
@@ -1169,3 +1150,45 @@ input[type="range"] { accent-color: var(--accent); }
 .st-confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
 .st-item .st-confirm .btn { height: 24px; }
 .st-limit { margin-top: 8px; font-size: 12.5px; color: var(--fg-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* A thread in the conversation: one box under its first message, with the latest reply in full. */
+.thread-sum { display: block; max-width: 640px; margin-top: 4px; padding: 5px 10px 6px; border: 1px solid var(--line);
+  border-left: 3px solid var(--line); border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg-2); cursor: pointer; }
+.thread-sum:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.msg:hover .thread-sum { background: var(--bg); }
+.ts-top { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-2); }
+.ts-top .i { width: 13px; height: 13px; color: var(--accent); flex: none; }
+.ts-top b { color: var(--accent); font-weight: 600; }
+.ts-top time { margin-left: auto; font-size: 11px; }
+.ts-new, .ts-me { padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 17px; color: #fff; background: var(--accent); }
+.ts-me { background: var(--danger); }
+.ts-more { margin-top: 3px; font-size: 11px; color: var(--fg-2); }
+.ts-reply { margin-top: 3px; font-size: 13px; line-height: 1.45; color: var(--fg);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ts-reply b { font-weight: 600; margin-right: 6px; }
+
+/* New messages look the same everywhere (conversation, thread lines, thread panel):
+   a "New" line above the first, and a bar on the left; red when it is for you. */
+.new-divider { display: flex; align-items: center; gap: 10px; margin: 10px 16px 4px; color: var(--accent); font-size: 11px; font-weight: 700; }
+.new-divider::before, .new-divider::after { content: ""; flex: 1; height: 1px; background: var(--accent); opacity: .6; }
+.msg.unread { box-shadow: inset 3px 0 0 var(--accent); }
+.msg.unread.me { box-shadow: inset 3px 0 0 var(--danger); }
+.thread-sum.unread { border-left-color: var(--accent); }
+.thread-sum.unread.me { border-left-color: var(--danger); }
+
+  font-size: 12px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Unread markers fade away once seen. */
+.msg.unread, .thread-sum.unread { transition: box-shadow 1.2s ease, border-left-color 1.2s ease; }
+.msg.unread.read-now { box-shadow: inset 3px 0 0 transparent; }
+.thread-sum.unread.read-now { border-left-color: var(--line); }
+
+/* News out of sight: a floating note at the top of the conversation. */
+#chat-toast { position: absolute; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 6px; }
+#chat-toast[hidden] { display: none; }
+#chat-toast button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 14px; border-radius: 14px;
+  font-size: 12px; font-weight: 600; color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgb(0 0 0 / .22); white-space: nowrap; }
+#chat-toast button.me { background: var(--danger); }
+#chat-toast button .i { width: 13px; height: 13px; }
+#chat-toast button:hover { filter: brightness(1.08); }
+.msg-body .md-img { display: block; max-width: min(360px, 100%); max-height: 260px; margin: 4px 0; border-radius: var(--radius); cursor: zoom-in; }

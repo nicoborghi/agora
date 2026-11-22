@@ -148,6 +148,8 @@ function inline(src) {
   const slots = [];
   const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
   let s = src.replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${esc(c)}</code>`));
+  // ![alt](https://...) is a picture (GIFs included), not "!" and a link.
+  s = s.replace(/!\[([^\]\n]*)\]\((https:\/\/[^\s)]+)\)/g, (_, t, u) => keep(`<img class="md-img" src="${esc(u)}" data-full="${esc(u)}" alt="${esc(t)}" loading="lazy">`));
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => keep(`<a href="${esc(u)}" data-url="${esc(u)}">${esc(t)}</a>`));
   s = s.replace(URL_RE, (u) => keep(`<a href="${esc(u)}" data-url="${esc(u)}">${esc(u)}</a>`));
   s = esc(s);

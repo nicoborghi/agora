@@ -241,6 +241,31 @@ fn integration_text(post: &Value) -> String {
     out
 }
 
+/// A picture on the web shown with a post, GIFs included (the UI shows those moving). Its size
+/// and format come from the post's `metadata.images` when the server measured it.
+fn remote_image(url: &str, meta: &Value) -> Attachment {
+    let info = &meta["images"][url];
+    let file = url.split(['?', '#']).next().unwrap_or(url).rsplit('/').next().unwrap_or("").to_string();
+    let ext = file.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let format = non_empty(&info["format"]).map(|f| f.to_ascii_lowercase()).unwrap_or(ext);
+    let mime = match format.as_str() {
+        "jpg" | "jpeg" => "image/jpeg".to_string(),
+        "" => "image/unknown".to_string(),
+        f => format!("image/{f}"),
+    };
+    Attachment {
+        id: url.to_string(),
+        name: if file.is_empty() { "image".to_string() } else { file },
+        mime,
+        size: 0,
+        url: url.to_string(),
+        thumb_url: None,
+        width: info["width"].as_u64().filter(|w| *w > 0).map(|w| w as u32),
+        height: info["height"].as_u64().filter(|h| *h > 0).map(|h| h as u32),
+        path: None,
+    }
+}
+
 pub fn post(acc: &str, server: &str, p: &Value, keys: &MentionKeys) -> Message {
     let mut text = s(&p["message"]);
     if p["type"].as_str().is_some_and(|t| t.starts_with("system_")) && !text.trim().is_empty() {
@@ -261,7 +286,7 @@ pub fn post(acc: &str, server: &str, p: &Value, keys: &MentionKeys) -> Message {
         }
     }
 
-    let attachments = meta["files"]
+    let mut attachments: Vec<Attachment> = meta["files"]
         .as_array()
         .into_iter()
         .flatten()
@@ -293,6 +318,22 @@ pub fn post(acc: &str, server: &str, p: &Value, keys: &MentionKeys) -> Message {
             }
         })
         .collect();
+
+    // Pictures from the web: a posted image link (the GIF picker posts one) and the images of
+    // integrations (GIF apps). Written as ![..](url), the text already shows it.
+    for e in meta["embeds"].as_array().into_iter().flatten() {
+        if e["type"].as_str() != Some("image") {
+            continue;
+        }
+        if let Some(url) = non_empty(&e["url"]).filter(|u| u.starts_with("https://") && !text.contains(&format!("]({u})"))) {
+            attachments.push(remote_image(&url, meta));
+        }
+    }
+    for a in p["props"]["attachments"].as_array().into_iter().flatten() {
+        if let Some(url) = non_empty(&a["image_url"]).filter(|u| u.starts_with("https://")) {
+            attachments.push(remote_image(&url, meta));
+        }
+    }
 
     let links = meta["embeds"]
         .as_array()
@@ -388,6 +429,26 @@ mod tests {
         assert_eq!(m.attachments[0].url, format!("{MEDIA_ORIGIN}/acc/files/f1"));
         assert_eq!(m.attachments[0].thumb_url.as_deref(), Some(format!("{MEDIA_ORIGIN}/acc/files/f1/preview").as_str()));
         assert_eq!(m.links[0].title, "Example");
+    }
+
+    #[test]
+    fn gifs_from_links_and_apps_are_shown() {
+        let gif = "https://media.tenor.com/abc/cat.gif";
+        let p = json!({ "id": "p", "message": gif,
+            "props": { "attachments": [{ "title": "giphy", "image_url": "https://media.giphy.com/media/x/giphy.gif" }] },
+            "metadata": {
+                "embeds": [{ "type": "image", "url": gif }],
+                "images": { gif: { "width": 220, "height": 160, "format": "gif" } }
+            }
+        });
+        let m = post("a", "https://mm", &p, &keys());
+        assert_eq!(m.attachments.len(), 2);
+        assert_eq!((m.attachments[0].url.as_str(), m.attachments[0].mime.as_str()), (gif, "image/gif"));
+        assert_eq!((m.attachments[0].width, m.attachments[0].name.as_str()), (Some(220), "cat.gif"));
+        assert_eq!(m.attachments[1].mime, "image/gif");
+        // Written as a Markdown image, the text shows it: no second copy.
+        let md = json!({ "id": "q", "message": format!("![cat]({gif})"), "metadata": { "embeds": [{ "type": "image", "url": gif }] } });
+        assert!(post("a", "https://mm", &md, &keys()).attachments.is_empty());
     }
 
     #[test]

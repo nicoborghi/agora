@@ -3,6 +3,15 @@
 
 export const CHANGES = [
   {
+    version: '0.6.0',
+    items: [
+      ['One line per thread', 'Replies no longer pile up in the conversation. Each thread has one box under its first message: how many replies, how many new, and the new ones to read right there. Once read, the next ones show.'],
+      ['Clearer unread', 'New messages look the same everywhere: a "New" line and a bar on the left, red when they mention you. The bars fade as you read.'],
+      ['News out of sight', 'A note at the top of the conversation points to new messages further up and to threads with new replies. One click takes you there.'],
+      ['GIFs', 'GIFs move in the conversation, including those from Mattermost\'s GIF picker and pasted GIF links. Pasting a GIF from a web page sends the moving picture, not a still.'],
+    ],
+  },
+  {
     version: '0.5.0',
     items: [
       ['Catch-up', 'Home has a Catch-up tab: what is for you, replies in your threads and the busiest conversations since you last looked, today, or the last days. Mark it all read in one click.'],
