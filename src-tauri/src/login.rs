@@ -50,7 +50,17 @@ pub fn open(app: &AppHandle, title: &str, start: &Url, script: Option<&str>) -> 
 /// Calls `step` about once a second until it returns a value, then closes the window.
 /// Fails when the user closes the window or after 15 minutes.
 /// Must run in an async command: reading cookies on the main thread deadlocks WebView2.
-pub async fn poll<T, F, Fut>(app: &AppHandle, window: WebviewWindow, mut step: F) -> Result<T, String>
+pub async fn poll<T, F, Fut>(app: &AppHandle, window: WebviewWindow, step: F) -> Result<T, String>
+where
+    F: FnMut(WebviewWindow) -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    poll_until(app, window, step, || None).await
+}
+
+/// [`poll`], but when the user closes the window (or time runs out), `on_close` can still
+/// give a result: what was collected so far.
+pub async fn poll_until<T, F, Fut>(app: &AppHandle, window: WebviewWindow, mut step: F, on_close: impl FnOnce() -> Option<T>) -> Result<T, String>
 where
     F: FnMut(WebviewWindow) -> Fut,
     Fut: Future<Output = Option<T>>,
@@ -69,7 +79,7 @@ where
         }
     };
     let _ = window.destroy();
-    result
+    result.or_else(|e| on_close().ok_or(e))
 }
 
 /// Value of a non-empty cookie visible at `url`.

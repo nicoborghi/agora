@@ -7,7 +7,11 @@ import { editImage } from './editor.js';
 import { EMOJI_GROUPS } from './emoji-data.js';
 import { CHANGES, compareVersions } from './changelog.js';
 import { galleryItems, openGallery, itemDate } from './gallery.js';
-import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged, fmtBytes } from './settings.js';
+import { openSettings, settingsOpen, closeSettings, settingsAccountsChanged, fmtBytes, settingsBack, closeQrScan } from './settings.js';
+
+// Phones show one screen at a time with larger touch targets (see html.mobile in style.css).
+const MOBILE = /Android/i.test(navigator.userAgent);
+if (MOBILE) document.documentElement.classList.add('mobile');
 
 const PAGE = 50;
 const MAX_LOADED = 400;
@@ -86,7 +90,42 @@ function schedule(...parts) {
     const todo = [...dirty];
     dirty.clear();
     todo.forEach((p) => RENDER[p]());
+    if (MOBILE) renderScreen();
   });
+}
+
+// ------------------------------------------------------------ phone screens
+/**
+ * Phones show one screen at a time: the conversation list, a page (Home, Bookmarks, To-do),
+ * a conversation, or a panel (thread, profile...) on top of it, and Settings over everything.
+ * Android's back button asks `window.agoraBack` (MainActivity.kt) to step back one level.
+ */
+function renderScreen() {
+  const screen = S.panel ? 'panel' : S.open ? 'chat' : isPage(S.rail) ? 'page' : 'list';
+  // The message box was measured while its screen was hidden (height 0): measure it again.
+  if (screen === 'chat' && document.body.dataset.screen !== 'chat') autosize($('#input'));
+  document.body.dataset.screen = screen;
+}
+/** Settings opened, closed or changed level: the gear's state follows. */
+export function screenChanged() { schedule('rail'); }
+/** One level back; false when already at the top (Android then leaves the app). */
+function mobileBack() {
+  if (closeQrScan()) return true;
+  if (!$('#popover').hidden) { closePopover(); return true; }
+  if ($('#gallery-view')?.open) { $('#gallery-view').close(); return true; }
+  if (settingsOpen()) { settingsBack(); return true; }
+  if (S.panel) { S.panel = null; schedule('panel', 'header'); return true; }
+  if (S.open) { closeChannel(); return true; }
+  return false;
+}
+if (MOBILE) {
+  window.agoraBack = mobileBack;
+  // Called by MainActivity when Agora leaves or returns to the screen (see Engine::set_foreground).
+  window.agoraForeground = (on) => {
+    // The camera (settings QR code) never keeps running behind another app.
+    if (!on) closeQrScan();
+    invoke('set_foreground', { visible: !!on }).catch(() => {});
+  };
 }
 export function refreshAll() { schedule('rail', 'sidebar', 'header', 'messages', 'panel', 'status', 'me', 'home'); }
 
@@ -100,6 +139,8 @@ async function init() {
   S.settings = b.settings;
   b.channels.forEach((c) => S.channels.set(key(c.account_id, c.id), c));
   S.rail = load('rail') || 'home';
+  // A phone opens on the recap of every workspace: Home, Catch-up.
+  if (MOBILE) { S.rail = 'home'; S.homeTab = 'catchup'; }
   if (railAccount() && !account(S.rail)) S.rail = 'home';
   if (S.rail === 'all' && S.settings.show_all_conversations === false) S.rail = 'home';
   applyTheme();
@@ -120,8 +161,10 @@ async function init() {
   setCustomEmoji((a, name) => S.customEmoji[a]?.[name]);
   S.accounts.filter((a) => S.conn[a.id]?.state === 'online').forEach((a) => loadCustomEmoji(a.id));
   bindUi();
+  loadOutbox();
   refreshAll();
-  const last = load('last-open');
+  // A phone starts on the list, not inside the last conversation.
+  const last = !MOBILE && load('last-open');
   if (last && S.channels.has(key(last.a, last.c))) openChannel(last.a, last.c);
 }
 
@@ -214,6 +257,9 @@ function onEvent(ev) {
       break;
     case 'message':
       onMessage(ev.message);
+      break;
+    case 'outbox':
+      loadOutbox();
       break;
     case 'message_deleted': {
       for (const list of [S.messages, S.panel?.messages || []]) {
@@ -350,7 +396,9 @@ RENDER.rail = function renderRail() {
     title="To-do and bookmarks${open ? ` - ${open} open` : ''}">${icon('todo')}
     ${open ? `<span class="count">${open > 99 ? '99+' : open}</span>` : ''}</div>`;
   const focus = !!S.settings?.notifications?.focus;
-  html += `<div class="rail-spacer"></div><div class="rail-item gear focus ${focus ? 'on' : ''}" data-act="focus"
+  html += '<div class="rail-spacer"></div>';
+  // No notifications on a phone, so no Focus mode either.
+  if (!MOBILE) html += `<div class="rail-item gear focus ${focus ? 'on' : ''}" data-act="focus"
     title="${focus ? 'Focus mode is on: no notifications. Click to turn it off' : 'Focus mode: turn off all notifications'}">${icon(focus ? 'bellOff' : 'bell')}</div>`;
   html += `<div class="rail-item gear ${inSettings ? 'active' : ''}" data-act="settings"
     title="${inSettings ? 'Close settings (Esc)' : 'Settings (Ctrl+,)'}">${icon('gear')}</div>`;
@@ -437,7 +485,9 @@ function selectRail(id) {
   // Messages may have changed since the list was loaded.
   if (id === 'todo') loadTodos();
   // A workspace never shows another one's chat: reopen its last conversation, else its newest.
-  if (railAccount() && S.open?.a !== id) {
+  // On a phone a workspace opens on its conversation list instead.
+  if (MOBILE && S.open && (isPage(id) || (railAccount() && S.open.a !== id))) closeChannel();
+  else if (railAccount() && S.open?.a !== id && !MOBILE) {
     const mine = [...S.channels.values()].filter((c) => c.account_id === id);
     const last = lastByAccount[id];
     const ch = (last && S.channels.get(key(id, last))) || mine.sort((x, y) => y.last_activity - x.last_activity)[0];
@@ -736,7 +786,8 @@ async function openChannel(a, c) {
   } catch (e) {
     toast(String(e));
   }
-  input.focus();
+  // On a phone the keyboard would cover half the conversation: it opens on a tap instead.
+  if (!MOBILE) input.focus();
 }
 
 function closeChannel() {
@@ -944,6 +995,14 @@ export async function checkForUpdate(manual) {
 export async function installUpdate() {
   const u = S.update.available;
   if (!u) return;
+  // Phone: the signed APK downloads in the browser, and Android installs it (only over this app
+  // when it carries the same signature).
+  if (MOBILE) {
+    if (!u.download) { toast('This release has no APK attached yet'); return; }
+    invoke('open_url', { url: u.download }).catch((x) => toast(String(x)));
+    toast(`Downloading Agora ${u.version} in the browser: open the file when it is done to install it`, 8000);
+    return;
+  }
   toast(`Downloading Agora ${u.version}... Agora restarts when it is installed.`, 8000);
   try {
     await invoke('install_update');
@@ -964,7 +1023,7 @@ function renderUpdateBar() {
   const u = S.update.available;
   bar.hidden = !u;
   bar.innerHTML = u ? `<span>Agora ${esc(u.version)} is available</span>
-    <button data-act="install-update">Update and restart</button>` : '';
+    <button data-act="install-update">${MOBILE ? 'Download' : 'Update and restart'}</button>` : '';
 }
 
 // ------------------------------------------------------------ bookmarks
@@ -1350,10 +1409,11 @@ RENDER.header = function renderHeader() {
   const acc = account(c.account_id);
   // The workspace in view needs no naming; Home, All conversations and Bookmarks mix them.
   const where = [c.group, railAccount() ? null : acc?.name].filter(Boolean).join(' · ');
-  h.innerHTML = `<div class="hdr-title">${glyph(c)}<b>${esc(c.display_name)}</b>
+  const back = MOBILE ? `<button class="icon-btn m-back" data-act="m-back" title="Back">${icon('back')}</button>` : '';
+  h.innerHTML = `${back}<div class="hdr-title">${glyph(c)}<b>${esc(c.display_name)}</b>
       <span class="svc-name">${esc(where)}</span><span class="topic" title="${esc(c.topic || '')}">${inlineMarkdown(c.topic || '')}</span></div>
     <button class="icon-btn ${c.starred ? 'on' : ''}" data-act="star" title="${c.starred ? 'Remove from favorites' : 'Add to favorites'}">${icon('star')}</button>
-    <button class="icon-btn" data-act="prefs" title="Notifications for this conversation${c.muted ? ' (off)' : ''}">${icon(c.muted ? 'bellOff' : 'bell')}</button>
+    ${MOBILE ? '' : `<button class="icon-btn" data-act="prefs" title="Notifications for this conversation${c.muted ? ' (off)' : ''}">${icon(c.muted ? 'bellOff' : 'bell')}</button>`}
     <button class="icon-btn ${S.panel?.type === 'gallery' ? 'on' : ''}" data-act="gallery" title="Details: description, bookmarks, pins, images and links">${icon('info')}</button>
     ${peopleButton(c)}`;
 };
@@ -1791,7 +1851,7 @@ function onChatToastClick(e) {
 function renderMessages(mode = false) {
   const box = $('#messages');
   if (!S.open) { box.innerHTML = ''; updateChatToast(); return; }
-  box.innerHTML = (S.hasOlder && S.messages.length ? '<div class="loading-older">Scroll up for older messages</div>' : '') + messagesHtml(S.messages, false, S.newSince);
+  box.innerHTML = (S.hasOlder && S.messages.length ? '<div class="loading-older">Scroll up for older messages</div>' : '') + messagesHtml(S.messages, false, S.newSince) + outboxHtml();
   if (mode === 'open') {
     const divider = box.querySelector('.new-divider');
     if (divider && divider.offsetTop > box.clientHeight / 2) {
@@ -1876,6 +1936,24 @@ function cancelEdit() {
   schedule('messages');
 }
 
+// ------------------------------------------------------------ messages waiting for a connection
+
+const isQueued = (e) => String(e).startsWith('queued:');
+const queuedText = (e) => String(e).slice('queued:'.length).trim();
+async function loadOutbox() {
+  try { S.outbox = await invoke('outbox'); } catch { S.outbox = []; }
+  schedule('messages');
+}
+/** This conversation's waiting messages, greyed at its end, each with Cancel. */
+function outboxHtml() {
+  const mine = (S.outbox || []).filter((q) => q.account_id === S.open?.a && q.channel_id === S.open?.c);
+  return mine.map((q) => `<div class="msg queued" data-queued="${esc(q.id)}">
+      <span class="av">${icon('clock')}</span>
+      <div class="msg-main"><div class="msg-head"><b>Waiting to send</b><time>${fmtTime(q.created)}${q.thread_root ? ' · thread reply' : ''}</time></div>
+        <div class="msg-body">${esc(q.text).replace(/\n/g, '<br>')}</div>
+        <div class="queued-note">Sent when this workspace is connected again. <button class="link" data-act="cancel-queued">Cancel</button></div></div></div>`).join('');
+}
+
 async function submit() {
   const input = $('#input');
   const text = input.value.trim();
@@ -1893,10 +1971,14 @@ async function submit() {
     if (editing) await invoke('edit_message', { account_id: editing.a, channel_id: editing.c, message_id: editing.id, text });
     else if (text) await invoke('send_message', { account_id: a, channel_id: c, text, thread_root: null });
   } catch (e) {
-    toast(String(e));
-    input.value = text;
-    autosize(input);
-    saveDraft();
+    // No connection: the message waits in the outbox (shown at the end of the conversation).
+    if (isQueued(e)) toast(queuedText(e));
+    else {
+      toast(String(e));
+      input.value = text;
+      autosize(input);
+      saveDraft();
+    }
   }
   await uploadFiles(a, c, files);
 }
@@ -1924,7 +2006,8 @@ function renderFormatBar() {
     + `<span class="grow"></span>
       <button data-act="emoji" title="Emoji (type : for suggestions)" tabindex="-1">${icon('smile')}</button>
       <button data-act="attach" title="Attach files (or paste / drop an image)" tabindex="-1">${icon('clip')}</button>
-      <button id="preview-btn" class="ghost" title="Preview as others see it (Ctrl+Shift+P)" tabindex="-1">Preview</button>`;
+      <button id="preview-btn" class="ghost" title="Preview as others see it (Ctrl+Shift+P)" tabindex="-1">Preview</button>
+      ${MOBILE ? `<button data-act="send" class="send" title="Send" tabindex="-1">${icon('send')}</button>` : ''}`;
 }
 
 /** Wraps the selection in Markdown markers (or removes them when already there). */
@@ -2115,7 +2198,8 @@ function showFullEmojiPicker(anchor, first, onPick) {
       grid.innerHTML = buttons(hits.slice(0, 200)) || '<p class="muted">No emoji found</p>';
     };
     draw();
-    search.focus();
+    // On a phone the keyboard would cover the emoji: the search field opens it on a tap.
+    if (!MOBILE) search.focus();
     search.addEventListener('input', draw);
     pop.addEventListener('click', (e) => {
       const t = e.target.closest('[data-tab]');
@@ -2378,7 +2462,8 @@ function renderPanel(rebuild = false) {
             ${['slack', 'rocketchat'].includes(account(p.a)?.kind) ? `<label class="also-send" title="The reply also appears in the conversation"><input type="checkbox" id="thread-broadcast">
               Also send to ${esc(S.channels.get(key(p.a, p.c))?.display_name || 'the conversation')}</label>` : ''}
             <button data-act="t-emoji" title="Emoji" tabindex="-1">${icon('smile')}</button>
-            <button data-act="t-attach" title="Attach files (or paste them)" tabindex="-1">${icon('clip')}</button></div></div>`;
+            <button data-act="t-attach" title="Attach files (or paste them)" tabindex="-1">${icon('clip')}</button>
+            ${MOBILE ? `<button data-act="t-send" class="send" title="Send" tabindex="-1">${icon('send')}</button>` : ''}</div></div>`;
       const ti = $('#thread-input');
       ti.value = S.drafts[threadDraftKey(p)] || '';
       autosize(ti);
@@ -2984,8 +3069,8 @@ function showRowMenu(anchor, c) {
   const groups = S.settings.groups || [];
   showPopover(anchor, `<div class="menu">
       <button data-act="star">${icon('star')}${c.starred ? 'Remove from favorites' : 'Add to favorites'}</button>
-      <button data-act="mute">${icon(c.muted ? 'bell' : 'bellOff')}${c.muted ? 'Turn notifications on' : 'Turn notifications off'}</button>
-      <button data-act="prefs">${icon('bell')}Notification settings...</button>
+      ${MOBILE ? '' : `<button data-act="mute">${icon(c.muted ? 'bell' : 'bellOff')}${c.muted ? 'Turn notifications on' : 'Turn notifications off'}</button>
+      <button data-act="prefs">${icon('bell')}Notification settings...</button>`}
       <hr><div class="menu-label">Agora group (only in this app)</div>
       ${groups.map((g) => `<button data-group="${esc(g.id)}" class="${c.local_group === g.id ? 'on' : ''}">${icon('folder')}${esc(g.name)}</button>`).join('')}
       ${c.local_group ? `<button data-group="">${icon('close')}Remove from group</button>` : ''}
@@ -3069,6 +3154,7 @@ async function sendThreadReply() {
   try {
     await invoke('send_message', { account_id: p.a, channel_id: p.c, text, thread_root: p.root, broadcast });
   } catch (e) {
+    if (isQueued(e)) { toast(queuedText(e)); return; }
     toast(String(e));
     input.value = text;
     saveThreadDraft();
@@ -3699,6 +3785,7 @@ function bindUi() {
     const b = e.target.closest('[data-act]');
     if (!b || !S.open) return;
     const c = S.channels.get(key(S.open.a, S.open.c));
+    if (b.dataset.act === 'm-back') { mobileBack(); return; }
     if (b.dataset.act === 'star') setStarred(c, !c.starred);
     if (b.dataset.act === 'prefs') showPrefs();
     if (b.dataset.act === 'gallery') { if (S.panel?.type === 'gallery') { S.panel = null; schedule('panel', 'header'); } else openDetails(); }
@@ -3712,7 +3799,14 @@ function bindUi() {
   });
 
   const box = $('#messages');
-  box.addEventListener('click', (e) => onMessageAreaClick(e, false));
+  box.addEventListener('click', async (e) => {
+    const cancel = e.target.closest('[data-act="cancel-queued"]');
+    if (!cancel) return onMessageAreaClick(e, false);
+    // Back into the box to edit or send later, unless something else is being written there.
+    const text = await invoke('cancel_queued', { id: cancel.closest('[data-queued]').dataset.queued }).catch(() => null);
+    const input = $('#input');
+    if (text && !input.value.trim()) { input.value = text; autosize(input); saveDraft(); }
+  });
   // Right-click on a reaction lists who reacted; on both the conversation and the side panel.
   const reactorsMenu = (inPanel) => (e) => {
     const r = e.target.closest('[data-act="toggle-reaction"]');
@@ -3723,6 +3817,25 @@ function bindUi() {
   };
   box.addEventListener('contextmenu', reactorsMenu(false));
   $('#panel').addEventListener('contextmenu', reactorsMenu(true));
+  // Phone: no hover, so a long press on a message shows its tools (react, thread, to-do...)
+  // under it; a tap anywhere else, or using one of them, hides them again.
+  if (MOBILE) {
+    const showTools = (e) => {
+      const row = e.target.closest('.msg');
+      if (!row || e.defaultPrevented || e.target.closest('a, img, video, [data-act="toggle-reaction"]')) return;
+      e.preventDefault();
+      const on = !row.classList.contains('touch-on');
+      document.querySelectorAll('.msg.touch-on').forEach((r) => r.classList.remove('touch-on'));
+      row.classList.toggle('touch-on', on);
+      if (on) row.querySelector('.msg-tools')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    box.addEventListener('contextmenu', showTools);
+    $('#panel').addEventListener('contextmenu', showTools);
+    document.addEventListener('click', (e) => {
+      const keep = e.target.closest('.msg.touch-on') && !e.target.closest('.msg-tools button');
+      if (!keep) setTimeout(() => document.querySelectorAll('.msg.touch-on').forEach((r) => r.classList.remove('touch-on')));
+    });
+  }
   box.addEventListener('scroll', loadOlder, { passive: true });
   let toastFrame = 0;
   box.addEventListener('scroll', () => { toastFrame ||= requestAnimationFrame(() => { toastFrame = 0; updateChatToast(); }); }, { passive: true });
@@ -3812,7 +3925,7 @@ function bindUi() {
   panel.addEventListener('keydown', (e) => {
     if (e.target.id !== 'thread-input') return;
     if (autocompleteKey(e) || formatShortcut(e, e.target)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendThreadReply(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE) { e.preventDefault(); sendThreadReply(); }
   });
   let threadDraftTimer = 0;
   panel.addEventListener('input', (e) => {
@@ -3837,6 +3950,7 @@ function bindUi() {
     const ti = $('#thread-input');
     if (!b || !ti) return;
     if (b.dataset.fmt) applyFormat(ti, b.dataset.fmt);
+    else if (b.dataset.act === 't-send') sendThreadReply();
     else if (b.dataset.act === 't-emoji') showEmojiPicker(b, ti);
     else if (b.dataset.act === 't-attach') {
       const pick = document.createElement('input');
@@ -3861,7 +3975,8 @@ function bindUi() {
   input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== AC.input) closeAutocomplete(); }, 150));
   input.addEventListener('keydown', (e) => {
     if (autocompleteKey(e) || formatShortcut(e, input)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); return; }
+    // On a phone Enter makes a new line, as in other chat apps; the Send button sends.
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE) { e.preventDefault(); submit(); return; }
     if (e.key === 'Escape') {
       // Cancelling an edit or closing the preview uses up Esc; otherwise it closes the thread panel.
       if (S.editing || S.previewOn) { e.preventDefault(); if (S.editing) cancelEdit(); else hideInfo(); }
@@ -3885,6 +4000,7 @@ function bindUi() {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.fmt) applyFormat(input, b.dataset.fmt);
+    else if (b.dataset.act === 'send') { submit(); input.focus(); }
     else if (b.dataset.act === 'emoji') showEmojiPicker(b, input);
     else if (b.dataset.act === 'attach') {
       const pick = document.createElement('input');

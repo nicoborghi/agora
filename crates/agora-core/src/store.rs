@@ -166,6 +166,11 @@ fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Store
     Ok(())
 }
 
+fn used_bytes(db: &Connection) -> rusqlite::Result<u64> {
+    let pragma = |p: &str| db.query_row(&format!("PRAGMA {p}"), [], |r| r.get::<_, i64>(0));
+    Ok(((pragma("page_count")? - pragma("freelist_count")?).max(0) * pragma("page_size")?) as u64)
+}
+
 fn has_fts(conn: &Connection) -> bool {
     conn.prepare("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'")
         .and_then(|mut st| st.exists([]))
@@ -400,6 +405,44 @@ impl Store {
     }
 
     // ------------------------------------------------------------ settings
+
+    /// Bytes the archive's pages hold (the file minus its free pages).
+    pub fn used_bytes(&self) -> StoreResult<u64> {
+        Ok(used_bytes(&self.db())?)
+    }
+
+    /// Removes the oldest messages (never bookmarked or to-do ones) until the archive holds at
+    /// most 90% of `limit` bytes, then compacts the file. Returns how many were removed.
+    /// Older history comes back from the server when scrolling up, as for any page not kept.
+    pub fn trim_to(&self, limit: u64) -> StoreResult<usize> {
+        let db = self.db();
+        if used_bytes(&db)? <= limit {
+            return Ok(0);
+        }
+        // Freed rows only shrink the file once it is compacted, so the share of messages to remove is
+        // worked out first (oldest first, to 90% of the limit), not measured while deleting.
+        let used = used_bytes(&db)? as f64;
+        let total: i64 = db.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;
+        let cut = ((total as f64) * (1.0 - (limit as f64 * 0.9) / used)).ceil().max(0.0) as i64;
+        let removed = db.execute(
+                "DELETE FROM messages WHERE rowid IN (
+                     SELECT m.rowid FROM messages m
+                     WHERE NOT EXISTS (SELECT 1 FROM bookmarks b WHERE b.account_id = m.account_id AND b.channel_id = m.channel_id AND b.message_id = m.id)
+                       AND NOT EXISTS (SELECT 1 FROM todos t WHERE t.account_id = m.account_id AND t.channel_id = m.channel_id AND t.message_id = m.id)
+                     ORDER BY m.ts LIMIT ?1)",
+            [cut],
+        )?;
+        if has_fts(&db) {
+            db.execute("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')", [])?;
+        }
+        db.execute(
+            "DELETE FROM message_versions WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.account_id = message_versions.account_id
+                 AND m.channel_id = message_versions.channel_id AND m.id = message_versions.id)",
+            [],
+        )?;
+        db.execute_batch("VACUUM")?;
+        Ok(removed)
+    }
 
     pub fn get_kv(&self, key: &str) -> StoreResult<Option<String>> {
         Ok(self
@@ -1210,6 +1253,24 @@ mod tests {
             attachments: vec![],
             links: vec![],
         }
+    }
+
+    #[test]
+    fn trim_removes_oldest_but_keeps_bookmarks() {
+        let s = temp_store();
+        let big = "x".repeat(4000);
+        let msgs: Vec<Message> = (0..600).map(|i| Message { text: format!("{i} {big}"), ..msg(&i.to_string(), 1000 + i, None) }).collect();
+        s.upsert_messages(&msgs).unwrap();
+        s.set_bookmark("a", "c", "0", true, 1).unwrap();
+        let before = s.used_bytes().unwrap();
+        let removed = s.trim_to(before / 2).unwrap();
+        assert!(removed > 0, "nothing removed");
+        assert!(s.used_bytes().unwrap() <= before / 2, "still over the limit");
+        let left: Vec<String> = s.messages("a", "c", None, 1000).unwrap().into_iter().map(|a| a.message.id).collect();
+        assert!(left.contains(&"0".to_string()), "the bookmarked oldest message was removed");
+        assert!(!left.contains(&"1".to_string()), "an old message survived");
+        assert!(left.contains(&"599".to_string()), "the newest message was removed");
+        assert_eq!(s.trim_to(before).unwrap(), 0, "trimmed again under the limit");
     }
 
     #[test]

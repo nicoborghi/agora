@@ -13,9 +13,10 @@ use crate::settings::{ChannelPrefs, Level, Settings};
 use crate::store::{Authored, Store, StoreResult};
 use crate::{search, secrets, sync, text};
 use chrono::{Datelike, Timelike};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
@@ -30,6 +31,26 @@ const GALLERY_MAX: u32 = 3000;
 const MARK_READ_DELAY: Duration = Duration::from_millis(1500);
 /// A wall-clock jump bigger than this between two 15 s ticks means the PC was asleep.
 const RESUME_GAP: Duration = Duration::from_secs(45);
+/// Start of the error `send` returns when it queued the message instead (no connection).
+pub const QUEUED: &str = "queued";
+/// Key of the waiting messages in the archive's key-value table.
+const OUTBOX_KEY: &str = "outbox";
+
+/// A message written while its workspace had no connection, sent when it reconnects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Queued {
+    pub id: String,
+    pub account_id: AccountId,
+    pub channel_id: String,
+    pub thread_root: Option<String>,
+    pub broadcast: bool,
+    pub text: String,
+    pub created: Millis,
+}
+
+/// Phone: how long after leaving the screen the connections close. Short trips away (picking a
+/// photo to attach, a glance at another app) keep them.
+const SUSPEND_AFTER: Duration = Duration::from_secs(60);
 /// Workspace logos are small (team icons, favicons); anything bigger is not a logo.
 const MAX_ICON_BYTES: usize = 96 * 1024;
 
@@ -260,6 +281,8 @@ pub enum UiEvent {
     Typing { account_id: AccountId, channel_id: String, user_name: String, thread_root: Option<String> },
     Presence { account_id: AccountId, user_id: String, presence: Presence },
     Accounts,
+    /// Messages waiting for a connection were added, sent or cancelled.
+    Outbox,
 }
 
 struct Running {
@@ -311,6 +334,12 @@ pub struct Engine {
     /// Pages of the archive checked against the service recently (conversation, `before`),
     /// so reopening or reloading a conversation does not ask again within a short time.
     verified: Mutex<HashMap<(Key, Option<Millis>), Instant>>,
+    /// Phone: bumped at each screen change, so a pending close only runs if nothing changed since.
+    lifecycle: AtomicU64,
+    /// Phone: connections closed while in the background.
+    suspended: AtomicBool,
+    /// Held while the waiting messages are read and written back.
+    outbox: Mutex<()>,
 }
 
 /// How often the same archive page is checked against the service.
@@ -367,6 +396,9 @@ impl Engine {
             pending_reads: Arc::default(),
             exhausted: Mutex::default(),
             verified: Mutex::default(),
+            lifecycle: AtomicU64::new(0),
+            suspended: AtomicBool::new(false),
+            outbox: Mutex::default(),
         })
     }
 
@@ -385,6 +417,15 @@ impl Engine {
         }
         let me = self.clone();
         self.spawn(async move { me.watch_resume().await });
+        let me = self.clone();
+        self.spawn(async move {
+            // Not during start-up, which reads the archive the most.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            loop {
+                me.trim_archive().await;
+                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+            }
+        });
         self.recompute_tray();
         for a in self.accounts() {
             if a.enabled {
@@ -418,6 +459,21 @@ impl Engine {
                 self.reconnect_all();
             }
             last = now;
+        }
+    }
+
+    /// Keeps the archive under the `archive_mb` setting (no limit when 0). Off the async threads:
+    /// removing and compacting can take a few seconds on a large archive.
+    async fn trim_archive(&self) {
+        let limit = self.settings().archive_mb.saturating_mul(1_000_000);
+        if limit == 0 {
+            return;
+        }
+        let store = self.store.clone();
+        match tokio::task::spawn_blocking(move || store.trim_to(limit)).await {
+            Ok(Ok(0)) | Err(_) => {}
+            Ok(Ok(n)) => tracing::info!("archive over its size limit: removed the {n} oldest messages"),
+            Ok(Err(e)) => tracing::warn!("archive size limit not applied: {e}"),
         }
     }
 
@@ -511,6 +567,14 @@ impl Engine {
         let sink = EventSink::new(id.clone(), self.tx.clone());
         let run_svc = svc.clone();
         let mut run = AbortOnDrop(tokio::spawn(async move { run_svc.run(sink).await }));
+        // Messages written while this workspace had no connection.
+        let (me, out_svc, out_id) = (self.clone(), svc.clone(), id.clone());
+        let _outbox = AbortOnDrop(tokio::spawn(async move {
+            loop {
+                let pause = if me.flush_outbox(&out_id, &out_svc).await { 5 } else { 30 };
+                tokio::time::sleep(Duration::from_secs(pause)).await;
+            }
+        }));
         let _catch_up = AbortOnDrop(tokio::spawn(self.clone().catch_up(id, svc)));
         tokio::select! {
             r = &mut run.0 => match r {
@@ -1180,6 +1244,38 @@ impl Engine {
         }
     }
 
+    /// Phone: the app left (`false`) or came back to (`true`) the screen. Nothing runs in the
+    /// background: connections close [`SUSPEND_AFTER`] after leaving, and on return every
+    /// workspace reconnects, which fetches what was missed (catch-up).
+    pub fn set_foreground(self: &Arc<Self>, on: bool) {
+        let generation = self.lifecycle.fetch_add(1, Ordering::SeqCst) + 1;
+        if on {
+            if self.suspended.swap(false, Ordering::SeqCst) {
+                tracing::info!("back on screen: reconnecting");
+                for a in self.accounts().into_iter().filter(|a| a.enabled) {
+                    self.start_account(a);
+                }
+            } else {
+                self.set_focused(true);
+            }
+            return;
+        }
+        let me = self.clone();
+        self.spawn(async move {
+            tokio::time::sleep(SUSPEND_AFTER).await;
+            if me.lifecycle.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            tracing::info!("in the background: closing connections");
+            me.suspended.store(true, Ordering::SeqCst);
+            let ids: Vec<AccountId> = lock(&me.running).keys().cloned().collect();
+            for id in ids {
+                me.stop_account(&id);
+            }
+            me.recompute_tray();
+        });
+    }
+
     pub fn set_focused(&self, focused: bool) {
         let open = {
             let mut v = lock(&self.view);
@@ -1253,6 +1349,8 @@ impl Engine {
         self.service(acc).ok_or_else(|| "this account is not connected".to_string())
     }
 
+    /// Sends a message; without a connection it is queued instead (see [`QUEUED`]) and sent when
+    /// the workspace reconnects.
     pub async fn send(
         &self,
         acc: &str,
@@ -1261,11 +1359,94 @@ impl Engine {
         thread_root: Option<&str>,
         broadcast: bool,
     ) -> Result<MessageView, String> {
-        let svc = self.connected(acc)?;
+        let online = matches!(lock(&self.conn).get(acc), Some(ConnState::Online));
+        let svc = match self.service(acc) {
+            Some(s) if online => s,
+            _ => return Err(self.queue(acc, ch, text, thread_root, broadcast)),
+        };
         self.hint_people(acc, &*svc, text);
-        let m = svc.send(ch, text, thread_root, broadcast).await.map_err(err)?;
+        let m = match svc.send(ch, text, thread_root, broadcast).await {
+            Ok(m) => m,
+            Err(ServiceError::Network(_)) => return Err(self.queue(acc, ch, text, thread_root, broadcast)),
+            Err(e) => return Err(err(e)),
+        };
         self.ingest(acc, m.clone(), false).map_err(err)?;
         self.message_view(m).map_err(err)
+    }
+
+    fn read_outbox(&self) -> Vec<Queued> {
+        self.store.get_kv(OUTBOX_KEY).ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    fn write_outbox(&self, items: &[Queued]) {
+        let json = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
+        if let Err(e) = self.store.set_kv(OUTBOX_KEY, &json) {
+            tracing::warn!("waiting messages not saved: {e}");
+        }
+        self.frontend.emit(UiEvent::Outbox);
+    }
+
+    /// Keeps a message for later; returns the error `send` gives the window (starts with [`QUEUED`]).
+    fn queue(&self, acc: &str, ch: &str, text: &str, thread_root: Option<&str>, broadcast: bool) -> String {
+        let _guard = lock(&self.outbox);
+        let mut items = self.read_outbox();
+        let created = now_ms();
+        items.push(Queued {
+            id: format!("q{created}-{}", items.len()),
+            account_id: acc.to_string(),
+            channel_id: ch.to_string(),
+            thread_root: thread_root.map(str::to_string),
+            broadcast,
+            text: text.to_string(),
+            created,
+        });
+        self.write_outbox(&items);
+        format!("{QUEUED}: No connection to this workspace: the message will be sent when Agora reconnects")
+    }
+
+    /// Messages waiting for a connection, oldest first.
+    pub fn outbox(&self) -> Vec<Queued> {
+        let _guard = lock(&self.outbox);
+        self.read_outbox()
+    }
+
+    /// Drops a waiting message (the user cancelled it); returns its text, to edit it again.
+    pub fn cancel_queued(&self, id: &str) -> Option<String> {
+        let _guard = lock(&self.outbox);
+        let mut items = self.read_outbox();
+        let pos = items.iter().position(|q| q.id == id)?;
+        let q = items.remove(pos);
+        self.write_outbox(&items);
+        Some(q.text)
+    }
+
+    /// Sends this workspace's waiting messages, in order, while it is connected (checked every few
+    /// seconds by the session). Stops at the first failure, returning false: they stay queued.
+    async fn flush_outbox(&self, acc: &str, svc: &Arc<dyn Service>) -> bool {
+        loop {
+            let next = {
+                let _guard = lock(&self.outbox);
+                self.read_outbox().into_iter().find(|q| q.account_id == acc)
+            };
+            let Some(q) = next else { return true };
+            match svc.send(&q.channel_id, &q.text, q.thread_root.as_deref(), q.broadcast).await {
+                Ok(m) => {
+                    {
+                        let _guard = lock(&self.outbox);
+                        let mut items = self.read_outbox();
+                        items.retain(|x| x.id != q.id);
+                        self.write_outbox(&items);
+                    }
+                    if let Err(e) = self.ingest(acc, m, false) {
+                        tracing::warn!(account = %acc, "sent waiting message not stored: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(account = %acc, "waiting message not sent yet: {e}");
+                    return false;
+                }
+            }
+        }
     }
 
     /// Hands the connector the people `@Name` in `text` may be, looked up by first word.
@@ -1894,14 +2075,20 @@ impl Engine {
         self.emit_channel(acc, ch).map_err(err)
     }
 
-    pub fn save_settings(&self, s: Settings) -> Result<(), String> {
+    pub fn save_settings(self: &Arc<Self>, s: Settings) -> Result<(), String> {
         self.store.save_settings(&s).map_err(err)?;
+        // A smaller archive limit applies at once, not at the next daily check.
+        let tighter = s.archive_mb > 0 && (self.settings().archive_mb == 0 || s.archive_mb < self.settings().archive_mb);
         let old = self.settings().notifications;
         let n = &s.notifications;
         let levels_changed = old.dm_level != n.dm_level || old.channel_level != n.channel_level || old.accounts != n.accounts;
         let groups: Vec<String> = s.groups.iter().map(|g| g.id.clone()).collect();
         let regrouped = self.store.clear_missing_groups(&groups).map_err(err)? > 0;
         *self.settings.write().unwrap_or_else(|e| e.into_inner()) = s;
+        if tighter {
+            let me = self.clone();
+            self.spawn(async move { me.trim_archive().await });
+        }
         // Sidebar rows show who is muted, so new levels (or dissolved groups) reload them.
         if levels_changed || regrouped {
             for a in self.accounts() {
@@ -1982,6 +2169,41 @@ mod tests {
             attachments: vec![],
             links: vec![],
         }
+    }
+
+    struct Silent;
+    impl Frontend for Silent {
+        fn emit(&self, _: UiEvent) {}
+        fn popup(&self, _: PopupNote) {}
+        fn play_sound(&self, _: &str) {}
+        fn set_tray(&self, _: Vec<String>, _: bool) {}
+    }
+    struct NoServices;
+    impl ServiceFactory for NoServices {
+        fn create(&self, _: &Account) -> Result<Arc<dyn Service>, String> {
+            Err("no services in tests".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn sending_offline_queues_and_cancel_returns_text() {
+        let path = std::env::temp_dir().join(format!("agora-outbox-{:x}.db", fastrand::u64(..)));
+        let engine = Engine::new(Arc::new(Store::open(&path, None).unwrap()), Arc::new(Silent), Arc::new(NoServices));
+        let e = engine.send("acc", "ch", "hello
+there", None, false).await.unwrap_err();
+        assert!(e.starts_with(QUEUED), "not queued: {e}");
+        engine.send("acc", "ch", "reply", Some("root"), false).await.unwrap_err();
+        let waiting = engine.outbox();
+        assert_eq!(waiting.len(), 2);
+        assert_eq!(waiting[1].thread_root.as_deref(), Some("root"));
+        // Kept in the archive: a new engine on the same file still has them.
+        drop(engine);
+        let engine = Engine::new(Arc::new(Store::open(&path, None).unwrap()), Arc::new(Silent), Arc::new(NoServices));
+        let first = engine.outbox()[0].clone();
+        assert_eq!(engine.cancel_queued(&first.id).as_deref(), Some("hello
+there"));
+        assert_eq!(engine.outbox().len(), 1);
+        assert_eq!(engine.cancel_queued("missing"), None);
     }
 
     #[test]

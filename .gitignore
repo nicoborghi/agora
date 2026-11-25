@@ -1,6 +1,12 @@
 /target
 /node_modules
-/src-tauri/gen
+/src-tauri/gen/schemas
 *.db
 *.db-wal
 *.db-shm
+
+# Signing keys (Android release key and its settings) never go in git.
+*.jks
+*.keystore
+keystore.properties
+/dist

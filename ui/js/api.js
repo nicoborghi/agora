@@ -66,6 +66,7 @@ const PATHS = {
   grid: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
   smile: '<circle cx="8" cy="8" r="6"/><path d="M5.5 9.5a3 3 0 0 0 5 0"/><path d="M6 6.3v.1M10 6.3v.1"/>',
   reply: '<path d="M6.5 4L3 7.5 6.5 11"/><path d="M3 7.5h6a4 4 0 0 1 4 4V13"/>',
+  send: '<path d="M2.5 7.8L13.5 2.5 9.8 13.5 7.6 8.7z"/><path d="M7.6 8.7L13.5 2.5"/>',
   edit: '<path d="M10.5 2.5l3 3L6 13H3v-3z"/>',
   trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9"/>',
   lock: '<rect x="3.5" y="7" width="9" height="7" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',

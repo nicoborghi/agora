@@ -28,6 +28,8 @@ pub const TEAMS_COOKIE: &str = "agora_slack_teams";
 /// Written by [`SIGNIN_SCRIPT`]: workspace URLs seen in the window (one per line), e.g.
 /// from the list Slack shows after an email sign-in. Set on `.slack.com`.
 pub const WORKSPACES_COOKIE: &str = "agora_slack_ws";
+/// Set by the Done button of the sign-in bar ([`SIGNIN_SCRIPT`]): stop adding workspaces.
+pub const DONE_COOKIE: &str = "agora_slack_done";
 /// Runs in the sign-in window only:
 /// - links and pop-ups that would open a new window (or the desktop app) open in this window,
 ///   which otherwise ignores them;
@@ -35,6 +37,30 @@ pub const WORKSPACES_COOKIE: &str = "agora_slack_ws";
 /// - once the Slack client runs, its workspaces and `xoxc-` tokens are copied from
 ///   localStorage into [`TEAMS_COOKIE`].
 pub const SIGNIN_SCRIPT: &str = r#"(function () {
+  // Once per page: the Android app runs this again every second.
+  if (window.__agoraSignin) return;
+  window.__agoraSignin = 1;
+  // Workspaces added so far (from Agora), in a bar with Done: one sign-in can add several
+  // workspaces of the same account, each opened in this same Slack session.
+  window.__agoraFound = function (names) {
+    if (!document.body || !names || !names.length) return;
+    var bar = document.getElementById('agora-found');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'agora-found';
+      bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;display:flex;gap:12px;align-items:center;' +
+        'padding:12px 14px;border-radius:12px;background:#1f2937;color:#fff;font:15px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)';
+      bar.innerHTML = '<div style="flex:1;min-width:0"><b>Agora</b> added <span></span>.<div style="opacity:.8;font-size:13px;margin-top:2px">' +
+        'Signed in to more workspaces with this account? <a href="https://slack.com/signin" style="color:#93c5fd">Open another</a>, then tap Done.</div></div>' +
+        '<button style="flex:none;border:0;border-radius:8px;padding:10px 16px;background:#3b82f6;color:#fff;font:600 15px system-ui,sans-serif">Done</button>';
+      bar.querySelector('button').onclick = function () {
+        document.cookie = 'agora_slack_done=1; domain=.slack.com; path=/; SameSite=Lax';
+        this.textContent = 'Adding...';
+      };
+      document.body.appendChild(bar);
+    }
+    bar.querySelector('span').textContent = names.join(', ');
+  };
   var generic = ['app', 'www', 'api', 'edgeapi', 'status', 'files', 'slack', 'a', 'slackhq', 'downloads'];
   function cookie(name) {
     var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -1205,7 +1231,6 @@ pub fn parse_teams(raw: &str) -> Vec<TeamLogin> {
 /// client (tens of MB in an empty private profile) just to redirect here.
 pub const SIGNIN_URL: &str = "https://slack.com/signin";
 
-/// "acme", "acme.slack.com" or any link into it → the workspace URL (no trailing slash).
 /// Whether `url` is an https address on slack.com or one of its subdomains.
 pub fn is_slack_host(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else { return false };
@@ -1213,6 +1238,7 @@ pub fn is_slack_host(url: &str) -> bool {
     host == "slack.com" || host.ends_with(".slack.com")
 }
 
+/// "acme", "acme.slack.com" or any link into it → the workspace URL (no trailing slash).
 pub fn workspace_url(workspace: &str) -> Option<String> {
     let w = workspace.trim().trim_end_matches('/');
     if w.is_empty() {

@@ -371,21 +371,30 @@ select:focus, input:focus { border-color: var(--fg-2); }
 input[type="color"] { width: 28px; height: 22px; border: 1px solid var(--line); border-radius: var(--radius); padding: 0; background: none; }
 
 /* ---------------------------------------------------------------- settings */
-.settings { display: flex; height: 100vh; }
-.settings nav { width: 200px; flex: none; background: var(--bg-2); border-right: 1px solid var(--line); padding: 14px 8px; }
-.settings nav .title { font-weight: 600; padding: 0 8px 10px; }
-.settings nav button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 5px 8px; border-radius: var(--radius); color: var(--fg-2); }
-.settings nav button .i { flex: none; width: 15px; height: 15px; opacity: .85; }
-.settings nav button.active .i { color: var(--accent); opacity: 1; }
-.settings nav button.active, .settings nav button:hover { background: var(--bg-3); color: var(--fg); }
-.settings nav .close { margin-top: 16px; }
-/* main spans to the window edge so its scrollbar does too; the side padding centres a
-   704px column (percentages resolve against .settings, so the 200px nav is taken off). */
-.settings main { flex: 1; overflow-y: auto; padding: 18px max(28px, calc((100% - 200px - 704px) / 2)) 40px; }
+/* Same shapes as the main window: a sidebar of sections with the sidebar's header, and the
+   section in a pane with a header bar like a conversation's. */
+/* Pinned to the overlay: sized by its content it would grow past the window (no scrolling, and a
+   wide field would widen every section). */
+.settings { position: absolute; inset: 0; display: flex; }
+.settings nav { width: 220px; flex: none; background: var(--bg-2); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.set-head { height: 42px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--line); font-size: var(--title-size); }
+.set-head b { flex: 1; font-weight: 600; }
+.set-list { flex: 1; overflow-y: auto; padding: 6px 0 12px; }
+.set-list button { display: flex; align-items: center; gap: 9px; width: calc(100% - 8px); margin: 0 4px; height: 30px; padding: 0 10px 0 12px;
+  text-align: left; border-radius: var(--radius); color: var(--fg-2); }
+.set-list button span { flex: 1; }
+.set-list button .i { flex: none; width: 15px; height: 15px; opacity: .85; }
+.set-list button .i:last-child { transform: rotate(-90deg); opacity: .5; }
+.set-list button.active .i { color: var(--accent); opacity: 1; }
+.set-list button.active, .set-list button:hover { background: var(--bg-3); color: var(--fg); }
+.settings main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* The body spans to the window edge so its scrollbar does too; the side padding centres a 704px column. */
+.set-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px max(28px, calc((100% - 704px) / 2)) 40px; }
 .settings h2 { font-size: 15px; margin: 0 0 12px; }
 .settings h3 { font-size: 12px; margin: 30px 0 10px; color: var(--fg-2); font-weight: 600; }
 .settings .opt { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 13px 0; border-bottom: 1px solid var(--line); }
-.settings main > p.muted { margin: 10px 0 0; line-height: 1.45; }
+.set-body > p.muted { margin: 10px 0 0; line-height: 1.45; }
 /* Settings → Accounts: adding a workspace, first and in one line. */
 .add-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
 .add-bar > span { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-right: 6px; }
@@ -1192,3 +1201,143 @@ input[type="range"] { accent-color: var(--accent); }
 #chat-toast button .i { width: 13px; height: 13px; }
 #chat-toast button:hover { filter: brightness(1.08); }
 .msg-body .md-img { display: block; max-width: min(360px, 100%); max-height: 260px; margin: 4px 0; border-radius: var(--radius); cursor: zoom-in; }
+
+/* ---------------------------------------------------------------- phone (Android) */
+/* One screen at a time (body[data-screen] is set by renderScreen in app.js):
+   list = conversations, page = Home/Bookmarks/To-do, chat = a conversation, panel = thread, profile... */
+html.mobile body { font-size: 15px; }
+html.mobile #app { flex-direction: column; height: 100%; }
+html.mobile .resizer { display: none !important; }
+
+/* The workspace bar runs along the bottom, within thumb reach, and scrolls sideways. */
+html.mobile #rail { order: 2; width: auto; height: 62px; flex-direction: row; padding: 0 8px; gap: 8px;
+  overflow-x: auto; overflow-y: hidden; border-right: 0; border-top: 1px solid var(--line); }
+html.mobile #rail::-webkit-scrollbar { display: none; }
+html.mobile .rail-item { width: 38px; height: 38px; flex: none; font-size: 14px; }
+html.mobile .rail-btn { width: 40px; height: 40px; flex: none; }
+html.mobile .rail-spacer { flex: 1 0 4px; }
+
+html.mobile #sidebar { width: auto; flex: 1; min-height: 0; }
+html.mobile #main { flex: 1; min-height: 0; }
+html.mobile body:not([data-screen="list"]) #sidebar { display: none; }
+html.mobile body[data-screen="list"] #main { display: none; }
+html.mobile body[data-screen="chat"] #rail, html.mobile body[data-screen="panel"] #rail { display: none; }
+html.mobile #panel { position: fixed; inset: 0; width: auto; z-index: 40; background: var(--bg); }
+
+/* Touch-sized bars and rows */
+html.mobile #sidebar-head, html.mobile #ch-header { height: 56px; font-size: 18px; }
+html.mobile #ch-header { padding: 0 6px 0 2px; gap: 2px; }
+html.mobile #ch-header .icon-btn { width: 42px; height: 42px; }
+html.mobile #ch-header .topic, html.mobile #ch-header .svc-name { display: none; }
+html.mobile #search-box { padding: 10px 10px 6px; }
+html.mobile #search { padding-top: 10px; padding-bottom: 10px; font-size: 15px; border-radius: 8px; }
+/* The list sizes its rows from these variables (set for the desktop text-size choice). */
+html.mobile #channel-list { --sb-row: 46px; --sb-font: 18px; --sb-av: 22px; --sb-badge: 22px; --sb-head: 13px; --sb-pad: 16px; --sb-margin: 4px; }
+html.mobile .row { height: 46px; font-size: 18px; padding: 0 14px; gap: 12px; }
+html.mobile .row .glyph { width: 20px; font-size: 18px; }
+html.mobile .row .av.sm { width: 22px; height: 22px; font-size: 10px; }
+html.mobile .row .av-stack { width: 22px; height: 22px; }
+html.mobile .row .av-stack .av { width: 16px; height: 16px; }
+html.mobile .row .badge { min-width: 22px; height: 22px; font-size: 12px; border-radius: 11px; }
+html.mobile .section { font-size: 13px; padding: 14px 16px 4px; }
+html.mobile #input { font-size: 16px; }
+
+/* Settings on a phone: the section list, then one section full screen (data-page, set in settings.js). */
+html.mobile #overlay.full { left: 0; }
+html.mobile .settings[data-page="list"] main, html.mobile .settings[data-page="section"] nav { display: none; }
+html.mobile .settings nav { width: auto; flex: 1; border-right: 0; }
+html.mobile .set-head { height: 56px; font-size: 18px; padding: 0 6px 0 16px; }
+html.mobile .settings main .set-head { padding-left: 2px; }
+html.mobile .set-head .icon-btn { width: 42px; height: 42px; }
+html.mobile .set-list button { height: 52px; font-size: 16px; gap: 14px; padding: 0 12px 0 16px; }
+html.mobile .set-list button .i { width: 19px; height: 19px; }
+html.mobile .set-body { padding: 4px 16px 40px; }
+html.mobile .settings h3 { font-size: 13px; margin-top: 26px; }
+/* Options: the label above, wide controls below it; a switch stays on the right. */
+html.mobile .settings .opt { flex-wrap: wrap; gap: 10px 16px; padding: 14px 0; }
+html.mobile .settings .opt .lbl { flex: 1 1 60%; font-size: 15px; }
+html.mobile .settings .opt .hint { font-size: 13px; }
+html.mobile .settings .opt > div:last-child { max-width: 100%; }
+html.mobile .settings select, html.mobile .settings input[type="text"], html.mobile .settings input[type="number"],
+html.mobile .settings input[type="time"], html.mobile .settings input[type="url"], html.mobile .settings input[type="password"] {
+  height: 40px; font-size: 15px; max-width: 100%; }
+html.mobile .settings .btn { min-height: 40px; padding: 0 14px; font-size: 15px; }
+html.mobile .settings .seg button { min-height: 38px; padding: 0 12px; }
+html.mobile .settings .switch { width: 44px; height: 26px; border-radius: 13px; }
+html.mobile .settings .switch::after { width: 18px; height: 18px; top: 3px; left: 3px; }
+html.mobile .settings .switch:checked::after { left: 21px; }
+html.mobile .settings .form-row { flex-wrap: wrap; }
+html.mobile .settings .form-row input { width: 100% !important; }
+html.mobile .add-bar { padding: 12px; }
+html.mobile .acc-line { flex-wrap: wrap; padding: 8px 10px; }
+html.mobile .acc-main { flex-wrap: wrap; }
+html.mobile .acc-name { width: auto; flex: 1 1 140px; font-size: 16px; }
+html.mobile .logo-btn .rail-item { width: 36px; height: 36px; }
+
+/* Phone: the bottom bar's dividers stand upright; Settings stays reachable at the right end
+   when the workspaces need sideways scrolling. */
+html.mobile .rail-sep { width: 1px; height: 26px; margin: 0; }
+html.mobile #rail [data-act="settings"] { position: sticky; right: 0; box-shadow: -12px 0 10px 2px var(--bg-2); background: var(--bg-2); color: var(--fg-2); }
+/* Phone: nothing in a conversation may be wider than the screen (code blocks scroll inside). */
+html.mobile #messages { overflow-x: hidden; }
+html.mobile .attachments > * { max-width: 100%; min-width: 0; }
+html.mobile .attachments img { max-width: 100%; height: auto; }
+/* Phone composer: the text box, then only emoji and attach (formatting is typed as Markdown). */
+html.mobile #composer { padding-left: 10px; padding-right: 10px; }
+html.mobile .compose-row { min-height: 44px; align-items: center; }
+html.mobile #input, html.mobile #thread-input { min-height: 30px; }
+html.mobile .compose-row textarea::-webkit-scrollbar { display: none; }
+html.mobile .fmt-bar [data-fmt], html.mobile .fmt-bar .sep, html.mobile #preview-btn { display: none; }
+html.mobile .fmt-bar button { min-width: 40px; height: 38px; }
+html.mobile .fmt-bar button .i { width: 20px; height: 20px; }
+html.mobile .rail-item.gear { margin-bottom: 0; }
+html.mobile .rail-item .i { width: 20px; height: 20px; }
+
+/* Phone: message tools appear under the message after a long press (no hover on a phone). */
+html.mobile .msg:hover { background: transparent; }
+html.mobile .msg:hover .msg-tools { display: none; }
+html.mobile .msg.touch-on { background: var(--bg-2); flex-wrap: wrap; }
+html.mobile .msg.touch-on .msg-tools { display: flex; position: static; flex-wrap: wrap; gap: 4px; margin: 8px 0 2px;
+  padding: 4px; flex-basis: 100%; box-sizing: border-box; border-radius: 10px; }
+html.mobile .msg-tools .icon-btn { width: 40px; height: 40px; }
+html.mobile .msg-tools .icon-btn .i { width: 19px; height: 19px; }
+html.mobile .msg-tools .quick { font-size: 20px; }
+/* Phone: Send at the right end of the composer. */
+html.mobile .fmt-bar .send { color: var(--accent-fg); background: var(--accent); border-radius: 50%; width: 40px; min-width: 40px; margin-left: 4px; }
+html.mobile .fmt-bar .send .i { width: 19px; height: 19px; }
+/* Phone: a long press opens the tools instead of selecting text ("Copy text" is in the ⋯ menu). */
+html.mobile #messages, html.mobile #panel .panel-body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Phone: menus and pickers open as a sheet along the bottom, not next to what was tapped. */
+html.mobile #popover { left: 8px !important; right: 8px !important; top: auto !important; bottom: 8px !important;
+  width: auto !important; max-height: 70%; overflow-y: auto; border-radius: 14px; }
+html.mobile #popover .menu button { min-height: 46px; font-size: 16px; }
+
+/* Phone: no grey/blue flash on tapped elements, and no "hover" colour left behind on the last
+   thing tapped (touch screens keep :hover until the next tap elsewhere). */
+html.mobile * { -webkit-tap-highlight-color: transparent; }
+@media (hover: none) {
+  html.mobile .icon-btn:hover, html.mobile .rail-btn:hover, html.mobile .btn:hover,
+  html.mobile .rail-item.gear:hover, html.mobile .rail-item.home:hover, html.mobile .rail-item.all:hover,
+  html.mobile .row:not(.active):hover, html.mobile .fmt-bar button:not(.send):hover,
+  html.mobile .set-list button:not(.active):hover, html.mobile .menu button:hover,
+  html.mobile .seg button:hover, html.mobile .reaction:hover { background: transparent; }
+  html.mobile .msg-body pre { background: var(--bg-2); }
+}
+
+/* Messages waiting for a connection, at the end of the conversation. */
+.msg.queued { opacity: .6; }
+.msg.queued .av .i { width: 15px; height: 15px; }
+.queued-note { font-size: 12px; color: var(--fg-2); margin-top: 2px; }
+.queued-note .link { color: var(--accent); margin-left: 4px; }
+html.mobile .queued-note { font-size: 14px; }
+html.mobile .st-total b { white-space: nowrap; }
+html.mobile .st-total .btn { white-space: nowrap; }
+
+/* Settings QR code (desktop) and the camera that reads it (phone). */
+.qr-box { margin-top: 10px; padding: 10px; background: #fff; border-radius: 10px; width: fit-content; }
+.qr-box svg { display: block; width: 260px; height: 260px; }
+#qr-scan { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 14px; padding: 24px 20px 32px; }
+#qr-scan video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#qr-scan .qr-frame { position: absolute; top: 50%; left: 50%; width: 62vmin; height: 62vmin; transform: translate(-50%, -60%); border: 3px solid rgba(255, 255, 255, .85); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .35); }
+#qr-scan p { position: relative; color: #fff; text-align: center; font-size: 15px; margin: 0; max-width: 320px; }
+#qr-scan .btn { position: relative; background: rgba(255, 255, 255, .15); color: #fff; border-color: rgba(255, 255, 255, .4); min-height: 44px; padding: 0 24px; font-size: 16px; }

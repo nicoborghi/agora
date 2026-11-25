@@ -1,7 +1,7 @@
 // Settings screen. Inputs carry `data-path` (a dotted path into S.settings) and
 // are saved automatically; everything else is handled by `data-act`.
 import { invoke, esc, initials, toast, icon, OS, KEYCHAIN } from './api.js';
-import { S, applyTheme, refreshAll, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate, showWhatsNew } from './app.js';
+import { S, applyTheme, refreshAll, screenChanged, kindName, playSound, relogin, accountIcon, FONTS, ACCENTS, TEXT_SIZES, resetSidebarWidth, checkForUpdate, installUpdate, showWhatsNew } from './app.js';
 
 const SECTIONS = [
   ['accounts', 'Accounts', 'people'],
@@ -12,11 +12,23 @@ const SECTIONS = [
   ['privacy', 'Privacy & storage', 'shield'],
   ['advanced', 'Advanced', 'sliders'],
 ];
+// Phones fetch only while the app is open, without notifications: those sections are left out.
+const PHONE_SECTIONS = new Set(['accounts', 'appearance', 'privacy', 'advanced']);
+const PHONE = /Android/i.test(navigator.userAgent);
+const sections = () => (PHONE ? SECTIONS.filter(([id]) => PHONE_SECTIONS.has(id)) : SECTIONS);
 const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const LEVELS = [['alert', 'Alert'], ['dot', 'Dot'], ['silent', 'Silent']];
 const SOUNDS = [['default', 'Gravitational wave'], ['beep', 'Beep'], ['none', 'None']];
 
 let current = 'accounts';
+// Phone: App lock state (null until asked).
+let appLock = null;
+// Desktop: the settings QR code while shown (SVG).
+let qrSvg = '';
+// What the settings QR code carries: look and display choices only (never sign-ins or tokens,
+// nor what belongs to one device such as cache sizes).
+const QR_PREFIX = 'agora-settings:1:';
+const QR_KEYS = ['theme', 'accent', 'font', 'link_previews', 'show_all_conversations', 'keep_edit_history'];
 let bound = false;
 let saveTimer = 0;
 // Sign-in form: which service, last server typed, waiting for the login window.
@@ -30,7 +42,9 @@ const SIGNIN = {
     serverOptional: true,
     placeholder: 'Workspace (optional), e.g. acme',
     intro: `Opens Slack's own sign-in page in a separate window (Google, SSO, email code and passwords all work).
-      Every workspace you sign in to there is added, each as its own account. Agora keeps the web session
+      Every workspace you sign in to there is added, each as its own account: after the first, a bar
+      at the bottom lists what was added. Open your other workspaces in the same Slack session, then press Done.
+      Agora keeps the web session
       (token and cookie) in ${KEYCHAIN}; nothing has to be installed in the workspace.
       <b>To add another workspace</b>, type its name: if the Slack session Agora already has is signed in
       to it, it is added at once without a window.`,
@@ -76,12 +90,15 @@ export const settingsOpen = () => overlay().classList.contains('full') && !overl
 
 export function openSettings(section) {
   if (section) current = section;
+  // On a phone, a named section (e.g. from a workspace menu) opens directly; otherwise the list.
+  phonePage = section ? 'section' : 'list';
   Object.assign(storage, { usage: null, confirm: null });
   const ov = overlay();
   ov.className = 'full';
   ov.hidden = false;
   if (!bound) bind(ov);
   render();
+  screenChanged();
 }
 
 export function closeSettings() {
@@ -89,6 +106,7 @@ export function closeSettings() {
   ov.hidden = true;
   ov.innerHTML = '';
   ov.className = '';
+  screenChanged();
 }
 
 function persist() {
@@ -252,7 +270,7 @@ const VIEWS = {
         <input type="radio" name="accent" data-path="accent" value="${v}" ${on ? 'checked' : ''}><i></i><span>${l}</span></label>`;
     }).join('')}</div>
     <p class="muted">Used for links, selections, buttons and mentions. Workspace colours stay as they are.</p>
-    <h3>Text size</h3>
+    ${PHONE ? '' : `<h3>Text size</h3>
     <div class="choices">${[['small', 'Small'], ['normal', 'Medium (default)'], ['large', 'Large']].map(([v, l]) => choice('sidebar_size', v, l,
       // The window is already zoomed to the current size: scale relative to it, so each
       // preview shows that size exactly as it will look.
@@ -261,12 +279,12 @@ const VIEWS = {
     <p class="muted">Everything scales together: sidebar, messages, settings and your profile.</p>
     <h3>Spacing</h3>
     <div class="choices true-width">${[['compact', 'Compact (default)'], ['wide', 'Wide']].map(([v, l]) => choice('sidebar_width', v, l,
-      `<div class="sb-preview" data-sb-width="${v}">${rows}</div>`)).join('')}</div>
+      `<div class="sb-preview" data-sb-width="${v}">${rows}</div>`)).join('')}</div>`}
     <h3>Font</h3>
     <div class="choices">${FONTS.map(([v, l, stack]) => choice('font', v, l,
       `<div class="font-preview" style="font-family:${esc(stack)}"><b>Aa Bb 0123</b><br>The draft is ready for review.</div>`)).join('')}</div>
-    <h3>Left bar</h3>
-    ${opt('All conversations button', 'Every conversation of every workspace in one sidebar. Ctrl+F opens it even when the button is hidden.', toggle('show_all_conversations'))}
+    <h3>${PHONE ? 'Bottom bar' : 'Left bar'}</h3>
+    ${opt('All conversations button', PHONE ? 'Every conversation of every workspace in one list.' : 'Every conversation of every workspace in one sidebar. Ctrl+F opens it even when the button is hidden.', toggle('show_all_conversations'))}
     ${opt('Link previews', 'Title, description and image under messages with links, when the service provides them.', toggle('link_previews'),
       `<div class="example"><div class="link-card" style="margin:0"><span class="t" style="color:var(--accent)">Title of the linked page</span>
        <div class="d">Short description supplied by the service.</div><div class="mock-shot" aria-hidden="true"><i></i><b></b><b></b></div></div></div>`)}`;
@@ -274,11 +292,17 @@ const VIEWS = {
 
   privacy: () => {
     const s = S.settings;
+    // App lock lives on the phone (Android Keystore), asked once per visit to this section.
+    if (PHONE && appLock === null) invoke('app_lock').then((on) => { appLock = on; render(); }).catch(() => {});
     return `<h2>Privacy & storage</h2>
+      ${PHONE ? opt('App lock', 'Fingerprint, face or the phone PIN to open Agora (again after 30 seconds away). Your sessions are then readable only shortly after unlocking, and Agora is hidden from screenshots and the recent-apps view.',
+        `<input type="checkbox" class="switch" data-act="app-lock" ${appLock ? 'checked' : ''} ${appLock === null ? 'disabled' : ''}>`) : ''}
       ${opt('Encrypt the archive', s.cipher_available
         ? `SQLCipher, with the key kept in ${KEYCHAIN}. Switching converts the existing archive.`
         : 'This build was compiled without SQLCipher.',
         `<input type="checkbox" class="switch" data-act="encrypt" ${s.db_encrypted ? 'checked' : ''} ${s.cipher_available ? '' : 'disabled'}>`)}
+      ${opt('Archive size limit', 'When the archive grows past this, its oldest messages are removed (bookmarked and to-do ones are kept); older history loads from the server again when you scroll up. 0 means no limit.',
+        `<span class="unit-input"><input type="number" min="0" step="50" data-path="archive_mb" value="${Number(s.archive_mb) || 0}" style="width:90px"> MB</span>`)}
       ${opt('Keep versions before edits', 'Stores the old text when a message is edited. Off by default: check your workspace policy first.', toggle('keep_edit_history'))}
       ${opt('Data folder', esc(s.data_dir), '')}
       <div class="example">The archive keeps every message received since installation, including other people's messages.
@@ -286,7 +310,29 @@ const VIEWS = {
       ${storageView()}`;
   },
 
+  // Start at login and the desktop updater do not apply to the phone (its update check is MOBILE.md step 8).
   advanced: () => `<h2>Advanced</h2>
+    ${PHONE ? phoneUpdates() : desktopAdvanced()}
+    <h3>${PHONE ? 'From the desktop' : 'Phone'}</h3>
+    ${PHONE
+      ? opt('Import settings', 'Scan the QR code in Agora on your computer (Settings, Advanced): theme, colours, font and display choices. Sign-ins are never copied: sign in on the phone itself.', '<button class="btn" data-act="qr-scan">Scan QR code</button>')
+      : opt('Copy settings to the phone', 'Theme, colours, font and display choices, as a QR code to scan in Agora on the phone (Settings, Advanced). No sign-ins or tokens: those stay on this computer.',
+        `<button class="btn" data-act="qr-show">${qrSvg ? 'Hide QR code' : 'Show QR code'}</button>`, qrSvg ? `<div class="qr-box">${qrSvg}</div>` : '')}
+    <h3>Build</h3>
+    ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
+    ${opt('Version', esc(S.settings.version), '<button class="btn" data-act="whats-new">What\'s new</button>')}
+    ${opt('Credits', 'Emoji: Noto Color Emoji by Google (SIL Open Font License). PDFs: Mozilla PDF.js (Apache License 2.0).', '')}`,
+};
+
+// Phone: releases tagged android-v* on GitHub, checked when Agora opens; the APK downloads in the browser.
+const phoneUpdates = () => `<h3>Updates</h3>
+    ${opt(`Agora ${esc(S.settings.version)}`, S.update.available
+      ? `Version ${esc(S.update.available.version)} is available.`
+      : S.update.checking ? 'Checking...' : S.update.error ? esc(S.update.error) : S.update.checked ? 'You have the latest version.' : 'Agora checks for a newer version when it opens.',
+      S.update.available ? '<button class="btn primary" data-act="install-update">Download</button>'
+        : `<button class="btn" data-act="check-update" ${S.update.checking ? 'disabled' : ''}>Check for updates</button>`)}`;
+
+const desktopAdvanced = () => `
     ${opt(OS === 'windows' ? 'Start with Windows' : 'Start at login', 'Off by default.', toggle('autostart'))}
     <h3>Updates</h3>
     ${opt(`Agora ${esc(S.settings.version)}`, S.update.available
@@ -294,12 +340,7 @@ const VIEWS = {
       : S.update.checking ? 'Checking...' : S.update.error ? esc(S.update.error) : S.update.checked ? 'You have the latest version.' : 'Agora checks for updates by itself, at start and every few hours.',
       S.update.available ? '<button class="btn primary" data-act="install-update">Update and restart</button>'
         : `<button class="btn" data-act="check-update" ${S.update.checking ? 'disabled' : ''}>Check for updates</button>`)}
-    ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Updates are signed: only installers signed with Agora\'s key are accepted.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}
-    <h3>Build</h3>
-    ${opt('Pre-publication build', 'Reminder to review sensitive features before any public release: Slack web-session tokens and the local message archive.', toggle('prepublication'))}
-    ${opt('Version', esc(S.settings.version), '<button class="btn" data-act="whats-new">What\'s new</button>')}
-    ${opt('Credits', 'Emoji: Noto Color Emoji by Google (SIL Open Font License). PDFs: Mozilla PDF.js (Apache License 2.0).', '')}`,
-};
+    ${opt('Update feed', 'GitHub Releases <code>latest.json</code>. Updates are signed: only installers signed with Agora\'s key are accepted.', `<input type="url" data-path="update_url" style="width:360px" value="${esc(S.settings.update_url)}">`)}`;
 
 // ------------------------------------------------------------ storage
 
@@ -371,7 +412,7 @@ function storageView() {
   const s = S.settings;
 
   return `<h3>Storage</h3>
-    <div class="st-total"><b>${fmtBytes(total)}</b> used by Agora on this computer
+    <div class="st-total"><b>${fmtBytes(total)}</b> used by Agora on this ${PHONE ? 'phone' : 'computer'}
       <button class="btn" data-act="storage-refresh">${icon('refresh')} Measure again</button></div>
     <div class="st-bar">${bar}</div>
     ${row('archive', 'Message archive', 'Every message received, in all workspaces. To delete a workspace\'s messages, remove it in Accounts and choose "Delete archive too".', u.archive)}
@@ -400,13 +441,96 @@ async function freeStorage(what, id, bytes) {
   loadStorage();
 }
 
+
+// ------------------------------------------------------------ settings by QR code (desktop → phone)
+
+async function toggleQr() {
+  if (qrSvg) { qrSvg = ''; render(); return; }
+  const pick = Object.fromEntries(QR_KEYS.filter((k) => k in S.settings).map((k) => [k, S.settings[k]]));
+  try { qrSvg = await invoke('qr_svg', { text: QR_PREFIX + JSON.stringify(pick) }); } catch (e) { toast(String(e)); }
+  render();
+}
+
+/** Applies a scanned code: only the expected keys, and only values of the type already there. */
+function importQr(raw) {
+  if (!raw.startsWith(QR_PREFIX)) { toast('That is not an Agora settings code'); return false; }
+  let data;
+  try { data = JSON.parse(raw.slice(QR_PREFIX.length)); } catch { toast('That code could not be read'); return false; }
+  const taken = QR_KEYS.filter((k) => k in data && typeof data[k] === typeof S.settings[k]);
+  taken.forEach((k) => { S.settings[k] = data[k]; });
+  persist();
+  applyTheme();
+  refreshAll();
+  render();
+  toast(taken.length ? 'Settings imported from the desktop' : 'Nothing to import in that code');
+  return true;
+}
+
+let scanner = null;
+/** Phone: the camera, full screen, until a settings code is read (or Cancel / Back). */
+async function startScan() {
+  if (!('BarcodeDetector' in window)) { toast('This phone cannot read QR codes in Agora'); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch {
+    toast('Agora needs the camera to read the code (allow it in the prompt, or in Android settings)');
+    return;
+  }
+  const el = document.createElement('div');
+  el.id = 'qr-scan';
+  el.innerHTML = `<video autoplay playsinline muted></video><div class="qr-frame"></div>
+    <p>Point the camera at the QR code in Agora on your computer (Settings, Advanced).</p>
+    <button class="btn" data-act="qr-cancel">Cancel</button>`;
+  document.body.appendChild(el);
+  const video = el.querySelector('video');
+  video.srcObject = stream;
+  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+  scanner = { el, stream, timer: 0 };
+  el.querySelector('[data-act="qr-cancel"]').addEventListener('click', closeQrScan);
+  const look = async () => {
+    if (!scanner) return;
+    try {
+      const [code] = video.readyState >= 2 ? await detector.detect(video) : [];
+      if (code?.rawValue) { closeQrScan(); importQr(code.rawValue); return; }
+    } catch { /* next frame */ }
+    scanner.timer = setTimeout(look, 250);
+  };
+  look();
+}
+
+/** Stops the camera and removes the scanner; false when none was open (for the back button). */
+export function closeQrScan() {
+  if (!scanner) return false;
+  clearTimeout(scanner.timer);
+  scanner.stream.getTracks().forEach((t) => t.stop());
+  scanner.el.remove();
+  scanner = null;
+  return true;
+}
+// Phones show one level at a time: the section list, then a section (see html.mobile .settings).
+let phonePage = 'list';
+/** Back on a phone: from a section to the list, from the list out of Settings. */
+export function settingsBack() {
+  if (PHONE && phonePage === 'section') { phonePage = 'list'; render(); } else closeSettings();
+  screenChanged();
+}
+
 function render() {
-  if (!VIEWS[current]) current = 'accounts';
-  overlay().innerHTML = `<div class="settings">
-    <nav><div class="title">Settings</div>
-      ${SECTIONS.map(([id, label, ic]) => `<button data-sec="${id}" class="${id === current ? 'active' : ''}">${icon(ic)}${label}</button>`).join('')}
+  if (!VIEWS[current] || !sections().some(([id]) => id === current)) current = 'accounts';
+  const [, title] = SECTIONS.find(([id]) => id === current);
+  // The section's own heading moves into the bar on top, as in a conversation.
+  const body = VIEWS[current]().replace(/^\s*<h2>[\s\S]*?<\/h2>/, '');
+  const active = (id) => (id === current && !PHONE ? 'active' : '');
+  overlay().innerHTML = `<div class="settings" data-page="${phonePage}">
+    <nav>
+      <div class="set-head"><b>Settings</b><button class="icon-btn" data-act="set-close" title="Close settings">${icon('close')}</button></div>
+      <div class="set-list">${sections().map(([id, label, ic]) => `<button data-sec="${id}" class="${active(id)}">${icon(ic)}<span>${label}</span>${PHONE ? icon('chevron') : ''}</button>`).join('')}</div>
     </nav>
-    <main>${VIEWS[current]()}</main></div>`;
+    <main>
+      <div class="set-head">${PHONE ? `<button class="icon-btn" data-act="set-back" title="Back">${icon('back')}</button>` : ''}<b>${esc(title)}</b></div>
+      <div class="set-body">${body}</div>
+    </main></div>`;
 }
 
 /** Reads an image file and turns it into a 64x64 PNG data URL (cropped to a square). */
@@ -509,6 +633,21 @@ function bind(ov) {
       persist();
       return;
     }
+    if (t.dataset.act === 'app-lock') {
+      const on = t.checked;
+      t.disabled = true;
+      try {
+        await invoke('set_app_lock', { on });
+        appLock = on;
+        toast(on ? 'App lock on' : 'App lock off');
+      } catch (err) {
+        toast(String(err), 5000);
+        t.checked = !on;
+      } finally {
+        t.disabled = false;
+      }
+      return;
+    }
     if (t.dataset.act === 'encrypt') {
       t.disabled = true;
       toast(t.checked ? 'Encrypting the archive...' : 'Decrypting the archive...');
@@ -526,12 +665,19 @@ function bind(ov) {
 
   ov.addEventListener('click', async (e) => {
     if (!settingsOpen()) return;
+    if (e.target.closest('[data-act="qr-show"]')) { toggleQr(); return; }
+    if (e.target.closest('[data-act="qr-scan"]')) { startScan(); return; }
+    if (e.target.closest('[data-act="set-close"]')) { closeSettings(); return; }
+    if (e.target.closest('[data-act="set-back"]')) { settingsBack(); return; }
     const sec = e.target.closest('[data-sec]');
     if (sec) {
       current = sec.dataset.sec;
+      phonePage = 'section';
       // Sizes are measured afresh each time the section opens.
       if (current === 'privacy') Object.assign(storage, { usage: null, confirm: null });
       render();
+      // One more step for the back gesture (section → list).
+      screenChanged();
       return;
     }
     // Level buttons: global defaults, or per workspace (where "Default" clears the override).

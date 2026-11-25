@@ -27,6 +27,10 @@ dependencies = [
  "agora-mattermost",
  "agora-rocketchat",
  "agora-slack",
+ "jni 0.21.1",
+ "ndk-context",
+ "qrcode",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -3396,6 +3400,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3457,7 +3467,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

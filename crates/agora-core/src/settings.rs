@@ -34,6 +34,9 @@ pub struct Settings {
     pub show_all_conversations: bool,
     pub link_previews: bool,
     pub image_cache_mb: u64,
+    /// Largest size of the message archive in MB; past it the oldest messages are removed (never
+    /// bookmarked or to-do ones). 0: no limit (the default on desktop).
+    pub archive_mb: u64,
     pub autostart: bool,
     pub update_url: String,
     /// Keep the text a message had before it was edited (off by default: workspace policies).
@@ -61,7 +64,9 @@ impl Default for Settings {
             font: "system".into(),
             show_all_conversations: true,
             link_previews: true,
-            image_cache_mb: 1024,
+            // A phone has less room to spare than a computer.
+            image_cache_mb: if cfg!(target_os = "android") { 256 } else { 1024 },
+            archive_mb: if cfg!(target_os = "android") { 300 } else { 0 },
             autostart: false,
             update_url: "https://github.com/nicoborghi/agora/releases/latest/download/latest.json".into(),
             keep_edit_history: false,

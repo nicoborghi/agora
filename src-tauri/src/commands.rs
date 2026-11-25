@@ -8,7 +8,9 @@ use agora_core::settings::{ChannelPrefs, Settings};
 use agora_core::{secrets, store::Store};
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
+#[cfg(desktop)]
+use tauri::Manager;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -90,6 +92,62 @@ pub async fn get_thread(
 pub async fn channel_images(state: State<'_, AppState>, account_id: String, channel_id: String) -> CmdResult<Vec<MessageView>> {
     let engine = state.engine.clone();
     tauri::async_runtime::spawn_blocking(move || engine.channel_images(&account_id, &channel_id)).await.map_err(err)?
+}
+
+/// Desktop: `text` as a QR code (SVG), for the phone to scan (Settings → Advanced).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn qr_svg(text: String) -> CmdResult<String> {
+    #[cfg(desktop)]
+    {
+        use qrcode::render::svg;
+        let code = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::M).map_err(err)?;
+        Ok(code.render::<svg::Color>().min_dimensions(260, 260).quiet_zone(true).build())
+    }
+    #[cfg(mobile)]
+    {
+        let _ = text;
+        Err("QR codes are made on the desktop".into())
+    }
+}
+
+/// Phone: whether App lock is on (always false on desktop).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn app_lock() -> CmdResult<bool> {
+    #[cfg(target_os = "android")]
+    return Ok(crate::android::app_lock_on());
+    #[cfg(not(target_os = "android"))]
+    Ok(false)
+}
+
+/// Phone: turns App lock on or off, after the fingerprint / face / PIN prompt.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_app_lock(on: bool) -> CmdResult<()> {
+    #[cfg(target_os = "android")]
+    return tauri::async_runtime::spawn_blocking(move || crate::android::set_app_lock(on)).await.map_err(err)?;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = on;
+        Err("App lock is only on the phone".into())
+    }
+}
+
+/// Messages waiting for a connection (sent when their workspace reconnects).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn outbox(state: State<'_, AppState>) -> CmdResult<Vec<agora_core::engine::Queued>> {
+    Ok(state.engine.outbox())
+}
+
+/// Cancels a waiting message; returns its text so it can be edited again.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn cancel_queued(state: State<'_, AppState>, id: String) -> CmdResult<Option<String>> {
+    Ok(state.engine.cancel_queued(&id))
+}
+
+/// Phone: Agora left or came back to the screen (MainActivity reports it through app.js).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_foreground(state: State<'_, AppState>, visible: bool) -> CmdResult<()> {
+    state.engine.set_foreground(visible);
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -214,14 +272,18 @@ pub struct UpdateInfo {
     pub version: String,
     pub current: String,
     pub notes: Option<String>,
+    /// Phone: the signed APK to download (Android installs it; only one signed with the same key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download: Option<String>,
 }
 
 /// Asks the update feed (Settings → Advanced, a GitHub release's latest.json) for a newer,
 /// signed version. Remembers it so `install_update` can install it; `None` when up to date.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
-    // Android: its own GitHub Releases check comes with signed APKs (step 8 of MOBILE.md).
-    #[cfg(mobile)]
+    #[cfg(target_os = "android")]
+    return check_update_android(app, state).await;
+    #[cfg(all(mobile, not(target_os = "android")))]
     {
         let _ = (app, state);
         Ok(None)
@@ -230,6 +292,59 @@ pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> CmdResu
     check_update_desktop(app, state).await
 }
 
+
+/// Phone releases are GitHub releases tagged `android-v<version>` with the signed APK attached, in
+/// the repository of the update feed (Settings, Advanced). The newest such release is offered when
+/// it is newer than this app; Android itself refuses an APK signed with another key.
+#[cfg(target_os = "android")]
+async fn check_update_android(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
+    let current = app.package_info().version.to_string();
+    let feed = state.engine.settings().update_url;
+    let repo = github_repo(&feed).ok_or("The update feed is not a GitHub repository")?;
+    let client = reqwest::Client::builder().user_agent("Agora-Android").timeout(std::time::Duration::from_secs(20)).build().map_err(err)?;
+    let releases: Vec<serde_json::Value> = client
+        .get(format!("https://api.github.com/repos/{repo}/releases?per_page=30"))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(err)?
+        .error_for_status()
+        .map_err(err)?
+        .json()
+        .await
+        .map_err(err)?;
+    let newest = releases.iter().find(|r| {
+        !r["draft"].as_bool().unwrap_or(false)
+            && !r["prerelease"].as_bool().unwrap_or(false)
+            && r["tag_name"].as_str().is_some_and(|t| t.starts_with("android-v"))
+    });
+    let Some(r) = newest else { return Ok(None) };
+    let version = r["tag_name"].as_str().unwrap_or_default().trim_start_matches("android-v").to_string();
+    if !newer_version(&version, &current) {
+        return Ok(None);
+    }
+    let apk = r["assets"].as_array().into_iter().flatten().find_map(|a| {
+        let name = a["name"].as_str()?;
+        name.ends_with(".apk").then(|| a["browser_download_url"].as_str().map(str::to_string)).flatten()
+    });
+    Ok(Some(UpdateInfo { version, current, notes: r["body"].as_str().map(str::to_string), download: apk }))
+}
+
+/// "owner/repo" of a github.com address (e.g. the desktop update feed).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn github_repo(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let mut parts = rest.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    (!owner.is_empty() && !repo.is_empty()).then(|| format!("{owner}/{repo}"))
+}
+
+/// Whether dotted version `a` is newer than `b` ("0.10.0" > "0.9.3").
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn newer_version(a: &str, b: &str) -> bool {
+    let parse = |v: &str| v.split(['.', '-', '+']).take(3).map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    parse(a) > parse(b)
+}
 #[cfg(desktop)]
 async fn check_update_desktop(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
     use tauri_plugin_updater::UpdaterExt;
@@ -238,7 +353,7 @@ async fn check_update_desktop(app: AppHandle, state: State<'_, AppState>) -> Cmd
         builder = builder.endpoints(vec![url]).map_err(err)?;
     }
     let update = builder.build().map_err(err)?.check().await.map_err(err)?;
-    let info = update.as_ref().map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() });
+    let info = update.as_ref().map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone(), download: None });
     *state.update.lock().unwrap_or_else(|e| e.into_inner()) = update;
     Ok(info)
 }
@@ -534,58 +649,85 @@ pub async fn slack_sign_in(
             let cookies_at: tauri::Url = sl::CLIENT_URL.parse().map_err(err)?;
             let window = login::open(&app, "Sign in to Slack", &start, Some(sl::SIGNIN_SCRIPT))?;
             let mut tick = 0u32;
-            // Tokens read from a workspace page that Slack refused: not tried again.
-            let refused = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<String>::new()));
-            login::poll(&app, window, |w| {
-                tick += 1;
-                let (given_ws, cookies_at, refused) = (given_ws.clone(), cookies_at.clone(), refused.clone());
-                async move {
-                    let d = login::cookie(&w, &cookies_at, sl::COOKIE_D)?;
-                    // The whole Slack session (d-s, x, b, lc...), sent like the browser does:
-                    // some workspaces refuse `d` alone with an empty HTTP 403.
-                    let jar = login::all_cookies(&w, &cookies_at);
-                    let creds = |token: &str| sl::Credentials::new(token, &d).with_cookies(&jar);
-                    // Every workspace, once the Slack client has started in the window.
-                    if let Some(raw) = login::cookie(&w, &cookies_at, sl::TEAMS_COOKIE) {
-                        let all: Vec<_> = sl::parse_teams(&raw).iter().map(|t| (creds(&t.token), Some(t.url.clone()))).collect();
-                        if !all.is_empty() {
-                            return Some(all);
+            // Every workspace found so far, with its name for the bar in the window. A new
+            // sign-in keeps collecting (one account can open several workspaces in the same
+            // Slack session) until Done or the window closes; a re-sign-in stops at the first.
+            type Found = Vec<(sl::Credentials, Option<String>, String)>;
+            let found: std::sync::Arc<std::sync::Mutex<Found>> = Default::default();
+            // Tokens already checked (accepted or refused by Slack): not tried again.
+            let tried = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<String>::new()));
+            let collect_all = account_id.is_none();
+            let take = |found: &std::sync::Mutex<Found>| -> Vec<(sl::Credentials, Option<String>)> {
+                found.lock().unwrap_or_else(|e| e.into_inner()).drain(..).map(|(c, ws, _)| (c, ws)).collect()
+            };
+            let on_close = {
+                let found = found.clone();
+                move || Some(take(&found)).filter(|v| !v.is_empty())
+            };
+            login::poll_until(
+                &app,
+                window,
+                |w| {
+                    tick += 1;
+                    let (given_ws, cookies_at, found, tried) = (given_ws.clone(), cookies_at.clone(), found.clone(), tried.clone());
+                    async move {
+                        let d = login::cookie(&w, &cookies_at, sl::COOKIE_D)?;
+                        // The whole Slack session (d-s, x, b, lc...), sent like the browser does:
+                        // some workspaces refuse `d` alone with an empty HTTP 403.
+                        let jar = login::all_cookies(&w, &cookies_at);
+                        let creds = |token: &str| sl::Credentials::new(token, &d).with_cookies(&jar);
+                        // Tokens to check: every workspace the Slack client lists (once it has
+                        // started in the window), and every ~2 s the token read from the page of
+                        // each workspace seen (typed, the page the window is on, the list after an
+                        // email sign-in), which is faster than waiting for the client.
+                        let mut new: Vec<(String, Option<String>)> = Vec::new();
+                        if let Some(raw) = login::cookie(&w, &cookies_at, sl::TEAMS_COOKIE) {
+                            new.extend(sl::parse_teams(&raw).into_iter().map(|t| (t.token, Some(t.url))));
                         }
-                    }
-                    // Faster: as soon as the login is done, read the token of every workspace seen
-                    // (typed, the page the window is on, the list after an email sign-in) instead
-                    // of waiting for the full client. Every ~2 s. Such a token is checked first:
-                    // a page can hold one Slack refuses (HTTP 403), and then the window stays open
-                    // until the Slack client lists every workspace with its own token (above).
-                    if tick % 3 != 0 {
-                        return None;
-                    }
-                    let mut candidates: Vec<String> = given_ws.into_iter().collect();
-                    candidates.extend(w.url().ok().and_then(|u| sl::workspace_of(u.as_str())));
-                    if let Some(raw) = login::cookie(&w, &cookies_at, sl::WORKSPACES_COOKIE) {
-                        candidates.extend(sl::parse_workspaces(&raw));
-                    }
-                    candidates.sort();
-                    candidates.dedup();
-                    let mut found = Vec::new();
-                    for ws in candidates {
-                        let Some(token) = sl::token_from_cookie(&ws, &creds("")).await else { continue };
-                        if found.iter().any(|(c, _): &(sl::Credentials, _)| c.token == token)
-                            || refused.lock().unwrap_or_else(|e| e.into_inner()).contains(&token)
-                        {
-                            continue;
+                        if tick % 3 == 0 {
+                            let mut candidates: Vec<String> = given_ws.into_iter().collect();
+                            candidates.extend(w.url().ok().and_then(|u| sl::workspace_of(u.as_str())));
+                            if let Some(raw) = login::cookie(&w, &cookies_at, sl::WORKSPACES_COOKIE) {
+                                candidates.extend(sl::parse_workspaces(&raw));
+                            }
+                            candidates.sort();
+                            candidates.dedup();
+                            for ws in candidates {
+                                if let Some(token) = sl::token_from_cookie(&ws, &creds("")).await {
+                                    new.push((token, Some(ws)));
+                                }
+                            }
                         }
-                        let c = creds(&token);
-                        if sl::whoami(&c, Some(&ws)).await.is_ok() {
-                            found.push((c, Some(ws)));
-                        } else {
-                            tracing::warn!("Slack refused the token read from {ws}'s page: waiting for the Slack client in the window");
-                            refused.lock().unwrap_or_else(|e| e.into_inner()).insert(token);
+                        for (token, ws) in new {
+                            if !tried.lock().unwrap_or_else(|e| e.into_inner()).insert(token.clone()) {
+                                continue;
+                            }
+                            let c = creds(&token);
+                            match sl::whoami(&c, ws.as_deref()).await {
+                                Ok(who) => {
+                                    let mut f = found.lock().unwrap_or_else(|e| e.into_inner());
+                                    if !f.iter().any(|(_, _, name)| *name == who.team) {
+                                        tracing::info!("Slack sign-in: found a workspace ({} so far)", f.len() + 1);
+                                        f.push((c, ws.or(Some(who.url)), who.team));
+                                    }
+                                }
+                                Err(e) => tracing::warn!("Slack refused a token from the sign-in window ({e}): still waiting"),
+                            }
                         }
+                        let names: Vec<String> = found.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(_, _, n)| n.clone()).collect();
+                        if names.is_empty() {
+                            return None;
+                        }
+                        if !collect_all || login::cookie(&w, &cookies_at, sl::DONE_COOKIE).is_some() {
+                            return Some(take(&found));
+                        }
+                        // Show what was added, with Done, in the Slack page.
+                        let _ = w.eval(&format!("window.__agoraFound && window.__agoraFound({})", serde_json::to_string(&names).unwrap_or_default()));
+                        None
                     }
-                    (!found.is_empty()).then_some(found)
-                }
-            })
+                },
+                on_close,
+            )
             .await?
         }
     };
@@ -799,7 +941,13 @@ pub async fn set_zoom(app: AppHandle, scale: f64) -> CmdResult<()> {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: String, border: String) -> CmdResult<()> {
     let _ = text;
-    #[cfg(mobile)]
+    // Android: the status and navigation bars take the same colour, with dark or light icons.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (app, border);
+        crate::android::set_bars(&caption, dark);
+    }
+    #[cfg(all(mobile, not(target_os = "android")))]
     let _ = (app, dark, caption, border);
     #[cfg(desktop)]
     let w = app.get_webview_window("main").ok_or("no main window")?;
@@ -840,6 +988,7 @@ pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: Str
 }
 
 /// Argument the login item starts Agora with: straight to the tray, no window.
+#[cfg(desktop)]
 pub const HIDDEN_ARG: &str = "--hidden";
 
 /// Keeps the system's login item in step with the "Start at login" setting.
@@ -867,11 +1016,10 @@ fn apply_autostart_desktop(app: &AppHandle, wanted: bool) {
 
 /// Hands a link or a file to the system, which opens it with the default app.
 fn open_with_system(target: &std::ffi::OsStr) -> CmdResult<()> {
-    // Android: links and files go through the system's intents (step 6 of MOBILE.md).
+    // Android: through the system's intents (browser, or the app for that file type).
     #[cfg(target_os = "android")]
     {
-        let _ = target;
-        return Err("Opening links and files is not available on Android yet".into());
+        return crate::android::open(&target.to_string_lossy());
     }
     #[cfg(windows)]
     let mut cmd = {
@@ -1003,4 +1151,27 @@ pub async fn popup_open(
 ) -> CmdResult<()> {
     tray::show_main(&app);
     app.emit_to("main", "agora-open", OpenTarget { account_id, channel_id, message_id, thread_root }).map_err(err)
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    /// The settings code the desktop shows: a well-formed SVG, also written to the temp folder so
+    /// it can be checked with a phone's QR reader.
+    #[test]
+    fn update_versions_and_repo() {
+        assert!(super::newer_version("0.10.0", "0.9.3"));
+        assert!(super::newer_version("1.0.0", "0.99.99"));
+        assert!(!super::newer_version("0.1.0", "0.1.0"));
+        assert!(!super::newer_version("0.1.0", "0.2.0"));
+        assert_eq!(super::github_repo("https://github.com/someone/agora/releases/latest/download/latest.json").as_deref(), Some("someone/agora"));
+        assert_eq!(super::github_repo("https://example.com/x"), None);
+    }
+
+    #[test]
+    fn settings_qr_is_svg() {
+        let text = r#"agora-settings:1:{"theme":"dark","accent":"teal","font":"system","link_previews":true,"show_all_conversations":true,"keep_edit_history":false}"#;
+        let svg = tauri::async_runtime::block_on(super::qr_svg(text.into())).unwrap();
+        assert!(svg.contains("<svg") && svg.contains("</svg>"));
+        std::fs::write(std::env::temp_dir().join("agora-settings-qr.svg"), svg).unwrap();
+    }
 }

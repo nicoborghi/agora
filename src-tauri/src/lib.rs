@@ -18,6 +18,8 @@ mod popup;
 mod tray;
 #[cfg(mobile)]
 use mobile::{login, popup, tray};
+#[cfg(target_os = "android")]
+mod android;
 
 use agora_core::{engine::Engine, secrets, store::Store};
 use std::path::PathBuf;
@@ -36,7 +38,14 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(not(target_os = "android"))]
     tracing_subscriber::fmt().with_target(false).init();
+    // Android drops stdout: the log goes to a file in the app's private folder instead
+    // (`adb shell run-as app.agora.mobile cat agora.log`), started afresh each launch.
+    #[cfg(target_os = "android")]
+    if let Ok(f) = std::fs::File::create("/data/data/app.agora.mobile/agora.log") {
+        tracing_subscriber::fmt().with_target(false).with_ansi(false).with_writer(std::sync::Mutex::new(f)).init();
+    }
     // Before Tauri opens the window, whose webview then holds its cache open.
     #[cfg(windows)]
     storage::clear_webview_if_asked("app.agora.desktop");
@@ -51,10 +60,26 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![commands::HIDDEN_ARG])))
         .plugin(tauri_plugin_updater::Builder::new().build());
+    // Sign-in pages open in the app's own webview on Android: web links only, so `slack:` or
+    // `intent:` links cannot hand the sign-in to the service's app instead.
+    #[cfg(mobile)]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<tauri::Wry>::new("agora-links")
+            .on_navigation(|_, url| {
+                let web = matches!(url.scheme(), "https" | "http" | "about" | "data" | "blob" | "tauri" | "ipc" | "asset");
+                if !web {
+                    tracing::info!("blocked a {}: link", url.scheme());
+                }
+                web
+            })
+            .build(),
+    );
     builder
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .register_asynchronous_uri_scheme_protocol(media::LEGACY_SCHEME, media::handle)
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            agora_core::secrets::install(Box::new(android::KeystoreSecrets));
             let data_dir = app.path().app_data_dir()?;
             migrate::legacy_folder(&data_dir);
             if let Ok(local) = app.path().app_local_data_dir() {
@@ -118,6 +143,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::set_foreground,
+            commands::outbox,
+            commands::cancel_queued,
+            commands::app_lock,
+            commands::qr_svg,
+            commands::set_app_lock,
             commands::list_accounts,
             commands::list_channels,
             commands::get_messages,

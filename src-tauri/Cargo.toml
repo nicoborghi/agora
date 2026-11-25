@@ -33,6 +33,15 @@ tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 # "Start at login" (Settings → Advanced), started hidden in the tray.
 tauri-plugin-autostart = "2"
+# The settings QR code for the phone (Settings → Advanced); the phone reads it with its camera.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Keystore secrets and cookie cleanup through the app's Kotlin helper (src/android.rs).
+jni = "0.21"
+ndk-context = "0.1"
+# The update check (GitHub releases tagged android-v*), over the same TLS as the services.
+reqwest = { workspace = true, features = ["rustls-tls"] }
 
 [features]
 # sqlcipher has no effect on Android (plain SQLite there, see agora-core's Cargo.toml).
