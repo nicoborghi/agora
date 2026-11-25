@@ -3,6 +3,17 @@
 
 export const CHANGES = [
   {
+    version: '0.7.0',
+    items: [
+      ['Settings, redesigned', 'Settings now looks like the rest of Agora: the sections on the left like your conversations, each section with its own title bar, and long pages that scroll properly.'],
+      ['Several Slack workspaces at once', 'After signing in to Slack, a bar lists the workspaces Agora added. Open your other workspaces in the same window, then press Done to add them all.'],
+      ['Nothing lost offline', 'A message sent without a connection waits at the end of the conversation, greyed, and is sent as soon as that workspace is back. Cancel puts the text back in the box.'],
+      ['Archive size limit', 'Settings, Privacy & storage can cap the message archive: past the limit the oldest messages are removed, never bookmarked or to-do ones. No limit unless you set one.'],
+      ['Tidier left bar', 'To-do and Bookmarks share one button with two pages, and the All conversations button can be hidden in Settings, Appearance.'],
+      ['Settings for your phone', 'Settings, Advanced shows a QR code with your theme and display choices, for Agora on Android to scan. Sign-ins are never included.'],
+    ],
+  },
+  {
     version: '0.6.0',
     items: [
       ['One line per thread', 'Replies no longer pile up in the conversation. Each thread has one box under its first message: how many replies, how many new, and the new ones to read right there. Once read, the next ones show.'],

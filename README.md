@@ -268,7 +268,9 @@ editor, themes and accent colours, automated releases, signed self-updates, book
 Ubuntu builds, files opened without a web login, message links, mark as unread, new direct messages, workspace
 emoji, start at login, single instance, an image cache with a size limit, a "What's new" window after updates,
 a to-do list across workspaces, a catch-up summary, focus mode, an image gallery with a timeline, a storage breakdown,
-one line per thread with its replies readable in place, one unread style that fades as you read, GIFs.
+one line per thread with its replies readable in place, one unread style that fades as you read, GIFs,
+redesigned settings, several Slack workspaces in one sign-in, messages kept while offline, an archive size limit,
+and Agora for Android (MOBILE.md).
 
 Next: smoother redrawing of busy conversations (only what changed), Slack canvases on real workspaces (images
 inside canvases), pinned messages for Mattermost and Rocket.Chat.

@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agora"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agora-core",
  "agora-mattermost",
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "agora-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "agora-mattermost"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agora-core",
  "async-trait",
@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "agora-probes"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "agora-rocketchat"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agora-core",
  "async-trait",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "agora-slack"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agora-core",
  "async-trait",
