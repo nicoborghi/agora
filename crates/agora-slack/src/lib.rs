@@ -85,20 +85,56 @@ pub struct Credentials {
     pub token: String,
     /// The `d` cookie, URL-encoded as Slack expects it in the header.
     pub cookie: String,
+    /// Slack's other session cookies from the sign-in window (`d-s`, `x`, `b`, `lc`...), as
+    /// `name=value; ...`, sent with `d` like a browser does. Some workspaces refuse the session
+    /// without them (an empty HTTP 403). Empty for accounts added before they were kept.
+    pub extra: String,
+}
+
+/// Cookies in Slack's pages that are not part of the session: consent, banners, tracking.
+fn session_cookie(name: &str) -> bool {
+    const SKIP: [&str; 6] = ["optanon", "utm", "banner", "modal", "shown_", "no_download"];
+    let n = name.to_ascii_lowercase();
+    n != "d" && !n.starts_with("agora_") && !SKIP.iter().any(|s| n.contains(s))
 }
 
 impl Credentials {
     pub fn new(token: &str, cookie: &str) -> Self {
-        Self { token: token.trim().to_string(), cookie: convert::pct_encode_cookie(cookie.trim()) }
+        Self { token: token.trim().to_string(), cookie: convert::pct_encode_cookie(cookie.trim()), extra: String::new() }
+    }
+
+    /// Keeps the session cookies among `jar` (every cookie of the sign-in window), as sent.
+    pub fn with_cookies(mut self, jar: &[(String, String)]) -> Self {
+        let ok = |v: &str| !v.is_empty() && v.bytes().all(|b| (0x21..0x7f).contains(&b) && b != b';' && b != b',');
+        self.extra = jar
+            .iter()
+            .filter(|(n, v)| session_cookie(n) && ok(n) && ok(v))
+            .map(|(n, v)| format!("{n}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        self
+    }
+
+    /// The `Cookie` header for Slack: `d`, then the other session cookies when known.
+    pub fn cookie_header(&self) -> String {
+        if self.extra.is_empty() {
+            format!("d={}", self.cookie)
+        } else {
+            format!("d={}; {}", self.cookie, self.extra)
+        }
     }
 
     pub fn to_json(&self) -> String {
-        json!({ "token": self.token, "cookie": self.cookie }).to_string()
+        let mut v = json!({ "token": self.token, "cookie": self.cookie });
+        if !self.extra.is_empty() {
+            v["cookies"] = json!(self.extra);
+        }
+        v.to_string()
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
         let v: Value = serde_json::from_str(raw).ok()?;
-        let c = Self { token: s(&v["token"]), cookie: s(&v["cookie"]) };
+        let c = Self { token: s(&v["token"]), cookie: s(&v["cookie"]), extra: s(&v["cookies"]) };
         (!c.token.is_empty() && !c.cookie.is_empty()).then_some(c)
     }
 }
@@ -130,7 +166,24 @@ async fn check(resp: Response) -> SResult<Value> {
     if status.is_server_error() {
         return Err(ServiceError::Network(format!("Slack server error {status}")));
     }
-    let v: Value = resp.json().await.map_err(net)?;
+    // Read as text first: when Slack answers with a web page (a block, a redirect to a login
+    // page, an error page), say so with its status and title instead of a bare decoding error.
+    let kind = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let body = resp.text().await.map_err(net)?;
+    let v: Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            let title = page_title(&body).map(|t| format!(" \"{t}\"")).unwrap_or_default();
+            let what = if kind.is_empty() { "no data".to_string() } else { kind.split(';').next().unwrap_or("").to_string() };
+            tracing::warn!("Slack answered HTTP {status} with {what}{title} ({} bytes) instead of JSON", body.len());
+            let msg = format!("Slack answered HTTP {} with {what}{title} instead of data", status.as_u16());
+            return Err(if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                ServiceError::Auth(msg)
+            } else {
+                ServiceError::Network(msg)
+            });
+        }
+    };
     if v["ok"].as_bool() == Some(true) {
         return Ok(v);
     }
@@ -140,6 +193,17 @@ async fn check(resp: Response) -> SResult<Value> {
         "ratelimited" => ServiceError::RateLimited(Duration::from_secs(30)),
         e => ServiceError::Other(format!("Slack: {e}")),
     })
+}
+
+/// The `<title>` of an HTML page, trimmed and cut short (only the title: the page itself may
+/// carry session data and is never logged).
+fn page_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find("<title")?;
+    let start = start + lower[start..].find('>')? + 1;
+    let end = start + lower[start..].find("</title")?;
+    let t = html[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    (!t.is_empty()).then(|| t.chars().take(80).collect())
 }
 
 fn presence(v: &str) -> Presence {
@@ -195,7 +259,7 @@ impl SlackService {
     }
 
     fn cookie(&self) -> String {
-        format!("d={}", self.creds.cookie)
+        self.creds.cookie_header()
     }
 
     async fn api(&self, method: &str, params: &[(&str, String)]) -> SResult<Value> {
@@ -1142,6 +1206,13 @@ pub fn parse_teams(raw: &str) -> Vec<TeamLogin> {
 pub const SIGNIN_URL: &str = "https://slack.com/signin";
 
 /// "acme", "acme.slack.com" or any link into it → the workspace URL (no trailing slash).
+/// Whether `url` is an https address on slack.com or one of its subdomains.
+pub fn is_slack_host(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    host == "slack.com" || host.ends_with(".slack.com")
+}
+
 pub fn workspace_url(workspace: &str) -> Option<String> {
     let w = workspace.trim().trim_end_matches('/');
     if w.is_empty() {
@@ -1184,15 +1255,20 @@ fn find_token(html: &str) -> Option<String> {
 }
 
 /// The web client's `xoxc-` token for a workspace, read from the page the browser loads
-/// right after sign-in, using only the `d` cookie. Lets the sign-in window close as soon
-/// as the login is done, without waiting for the full Slack client to start.
-pub async fn token_from_cookie(workspace_url: &str, cookie: &str) -> Option<String> {
-    let cookie = convert::pct_encode_cookie(cookie);
+/// right after sign-in, using only the session cookies of `session` (its token is unused).
+/// Lets the sign-in window close as soon as the login is done, without waiting for the full
+/// Slack client to start.
+pub async fn token_from_cookie(workspace_url: &str, session: &Credentials) -> Option<String> {
+    // The session cookie only ever goes to Slack itself, whatever address was typed.
+    if !is_slack_host(workspace_url) {
+        return None;
+    }
+    let cookie = session.cookie_header();
     // Slack serves its boot data only to browsers it supports.
-    const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
+    const UA: &str = BROWSER_UA;
     let http = reqwest::Client::builder().user_agent(UA).timeout(Duration::from_secs(20)).build().ok()?;
     for path in ["/ssb/redirect", "/"] {
-        let resp = http.get(format!("{workspace_url}{path}")).header("Cookie", format!("d={cookie}")).send().await;
+        let resp = http.get(format!("{workspace_url}{path}")).header("Cookie", &cookie).send().await;
         let Ok(resp) = resp else { continue };
         if let Some(t) = resp.text().await.ok().and_then(|html| find_token(&html)) {
             return Some(t);
@@ -1210,11 +1286,32 @@ pub struct WhoAmI {
     pub url: String,
 }
 
-/// Checks a token + cookie pair against `auth.test`.
-pub async fn whoami(creds: &Credentials) -> Result<WhoAmI, String> {
+/// Checks a token + cookie pair against `auth.test`, at the workspace's own address when known
+/// (as every other call does: some organisations refuse a web session on slack.com itself),
+/// then at slack.com.
+pub async fn whoami(creds: &Credentials, workspace: Option<&str>) -> Result<WhoAmI, String> {
+    let own = workspace.map(|w| w.trim_end_matches('/')).filter(|w| is_slack_host(w));
+    let mut first_err = None;
+    for base in own.into_iter().chain(["https://slack.com"]) {
+        match auth_test(creds, base).await {
+            Ok(who) => return Ok(who),
+            Err(e) => {
+                tracing::warn!("auth.test at {base}: {e}");
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    Err(first_err.unwrap_or_default())
+}
+
+/// How Edge identifies itself; Slack serves some pages only to browsers it supports.
+const BROWSER_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
+
+async fn auth_test(creds: &Credentials, base: &str) -> Result<WhoAmI, String> {
     let resp = client()
-        .post("https://slack.com/api/auth.test")
-        .header("Cookie", format!("d={}", creds.cookie))
+        .post(format!("{base}/api/auth.test"))
+        .header("Cookie", creds.cookie_header())
         .form(&[("token", creds.token.as_str())])
         .send()
         .await
@@ -1242,11 +1339,24 @@ mod tests {
         assert_eq!(workspace_of("https://acme.slack.com/ssb/redirect").as_deref(), Some("https://acme.slack.com"));
         assert_eq!(workspace_of("https://app.slack.com/client/T1"), None);
         assert_eq!(workspace_of("https://slack.com/signin"), None);
+        assert_eq!(page_title("<html><head><TITLE>\n  Slack is down \n</TITLE>").as_deref(), Some("Slack is down"));
+        assert_eq!(page_title("{\"ok\":false}"), None);
+        assert!(is_slack_host("https://acme.slack.com"));
+        assert!(is_slack_host("https://acme.enterprise.slack.com"));
+        assert!(!is_slack_host("https://slack.com.evil.example"));
+        assert!(!is_slack_host("https://example.com"));
         let ws = parse_workspaces("https%3A%2F%2Facme.slack.com%0Ahttps%3A%2F%2Fevil.example.com%0Ahttps%3A%2F%2Facme.slack.com");
         assert_eq!(ws, vec!["https://acme.slack.com".to_string()]);
         let html = r#"x "api_token":"xoxe-no" y "api_token":"xoxc-123-abc" z"#;
         assert_eq!(find_token(html).as_deref(), Some("xoxc-123-abc"));
         let c = Credentials::new(" xoxc-1 ", "xoxd-a/b");
         assert_eq!(Credentials::parse(&c.to_json()).unwrap().cookie, "xoxd-a%2Fb");
+        assert_eq!(c.cookie_header(), "d=xoxd-a%2Fb");
+        let jar: Vec<(String, String)> = [("d", "dup"), ("d-s", "1700000000"), ("x", "abc"), ("OptanonConsent", "big"), ("agora_slack_teams", "t"), ("lc", "bad;value")]
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect();
+        let back = Credentials::parse(&c.with_cookies(&jar).to_json()).unwrap();
+        assert_eq!(back.cookie_header(), "d=xoxd-a%2Fb; d-s=1700000000; x=abc");
     }
 }

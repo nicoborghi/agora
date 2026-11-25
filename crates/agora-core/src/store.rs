@@ -1185,6 +1185,13 @@ mod tests {
         Store::open(&path, None).unwrap()
     }
 
+    /// The `sqlcipher` feature swaps SQLite for SQLCipher through libsqlite3-sys: check it did.
+    #[cfg(all(feature = "sqlcipher", not(target_os = "android")))]
+    #[test]
+    fn sqlcipher_is_linked() {
+        assert!(Store::cipher_available());
+    }
+
     fn msg(id: &str, ts: Millis, root: Option<&str>) -> Message {
         Message {
             account_id: "a".into(),

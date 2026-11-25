@@ -7,8 +7,8 @@ publish = false
 
 [dependencies]
 tokio.workspace = true
-reqwest.workspace = true
-tokio-tungstenite.workspace = true
+reqwest = { workspace = true, features = ["native-tls"] }
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 futures-util.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

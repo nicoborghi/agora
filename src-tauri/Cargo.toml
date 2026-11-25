@@ -5,6 +5,11 @@ license.workspace = true
 edition.workspace = true
 publish = false
 
+# The app is a library so Android can load it (desktop's main.rs just calls `agora_lib::run`).
+[lib]
+name = "agora_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -13,20 +18,24 @@ agora-core = { path = "../crates/agora-core", default-features = false, features
 agora-mattermost = { path = "../crates/agora-mattermost" }
 agora-rocketchat = { path = "../crates/agora-rocketchat" }
 agora-slack = { path = "../crates/agora-slack" }
+# tray-icon only takes effect on desktop.
 tauri = { version = "2", features = ["tray-icon"] }
-# Signed self-update from the GitHub releases (latest.json); checked by commands::check_update.
-tauri-plugin-updater = "2"
-# A second start brings the running Agora to the front (one tray icon, one archive).
-tauri-plugin-single-instance = "2"
-# "Start at login" (Settings → Advanced), started hidden in the tray.
-tauri-plugin-autostart = "2"
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = "0.3"
 
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Signed self-update from the GitHub releases (latest.json); checked by commands::check_update.
+tauri-plugin-updater = "2"
+# A second start brings the running Agora to the front (one tray icon, one archive).
+tauri-plugin-single-instance = "2"
+# "Start at login" (Settings → Advanced), started hidden in the tray.
+tauri-plugin-autostart = "2"
+
 [features]
+# sqlcipher has no effect on Android (plain SQLite there, see agora-core's Cargo.toml).
 default = ["sqlcipher"]
 sqlcipher = ["agora-core/sqlcipher"]
 # Fallback if the SQLCipher/OpenSSL build gives trouble: `npm run tauri dev -- --no-default-features --features plain-sqlite`

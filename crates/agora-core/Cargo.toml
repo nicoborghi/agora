@@ -8,14 +8,17 @@ publish = false
 [features]
 default = ["sqlcipher", "demo"]
 # Encrypted archive. On Windows this builds a vendored OpenSSL, which needs Strawberry Perl.
-sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Desktop only: on Android the feature does nothing and the archive is plain SQLite (the
+# dependency it enables exists only for desktop targets, below).
+sqlcipher = ["dep:libsqlite3-sys"]
 # Unencrypted fallback: build the app with `--no-default-features --features plain-sqlite`.
-plain-sqlite = ["rusqlite/bundled"]
+# (SQLite is always bundled; this name is kept for that command.)
+plain-sqlite = []
 # Offline fake workspace used to test the UI, notifications and tray without real accounts.
 demo = []
 
 [dependencies]
-rusqlite = "0.32"
+rusqlite = { version = "0.32", features = ["bundled"] }
 getrandom = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tokio.workspace = true
@@ -26,7 +29,12 @@ thiserror.workspace = true
 tracing.workspace = true
 fastrand.workspace = true
 
+# SQLCipher in place of plain SQLite (rusqlite's own sqlite3 library), with the `sqlcipher` feature.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+libsqlite3-sys = { version = "0.30", optional = true, features = ["bundled-sqlcipher-vendored-openssl"] }
+
 # Saved sign-ins and the archive key, in each system's own secret store.
+# (Android: the app registers a Keystore-backed store at start, see secrets.rs.)
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 

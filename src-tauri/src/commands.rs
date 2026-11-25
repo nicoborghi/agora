@@ -220,6 +220,18 @@ pub struct UpdateInfo {
 /// signed version. Remembers it so `install_update` can install it; `None` when up to date.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
+    // Android: its own GitHub Releases check comes with signed APKs (step 8 of MOBILE.md).
+    #[cfg(mobile)]
+    {
+        let _ = (app, state);
+        Ok(None)
+    }
+    #[cfg(desktop)]
+    check_update_desktop(app, state).await
+}
+
+#[cfg(desktop)]
+async fn check_update_desktop(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<UpdateInfo>> {
     use tauri_plugin_updater::UpdaterExt;
     let mut builder = app.updater_builder();
     if let Ok(url) = state.engine.settings().update_url.parse::<tauri::Url>() {
@@ -235,6 +247,17 @@ pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> CmdResu
 /// restarts Agora. Settings, archive and sign-ins are outside the program folder and stay.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    #[cfg(mobile)]
+    {
+        let _ = (app, state);
+        Err("No update to install".into())
+    }
+    #[cfg(desktop)]
+    install_update_desktop(app, state).await
+}
+
+#[cfg(desktop)]
+async fn install_update_desktop(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let update = state.update.lock().unwrap_or_else(|e| e.into_inner()).take().ok_or("No update to install")?;
     update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
     app.restart()
@@ -478,25 +501,31 @@ pub async fn slack_sign_in(
 ) -> CmdResult<Vec<SignInDto>> {
     use agora_slack as sl;
     let given = token.zip(cookie).filter(|(t, c)| !t.trim().is_empty() && !c.trim().is_empty());
-    let logins: Vec<sl::Credentials> = match given {
-        Some((t, c)) => vec![sl::Credentials::new(&t, &c)],
+    // Each login with its workspace address when known, where it is checked first.
+    let typed = server.as_deref().unwrap_or_default();
+    let given_ws = sl::workspace_url(typed);
+    let logins: Vec<(sl::Credentials, Option<String>)> = match given {
+        Some((t, c)) => vec![(sl::Credentials::new(&t, &c), given_ws.clone())],
         None => {
-            let typed = server.as_deref().unwrap_or_default();
-            let given_ws = sl::workspace_url(typed);
             // Adding a workspace (not re-signing in): the Slack session Agora already holds is
             // usually signed in to it too, which needs no window at all.
+            // If that session does not work for it, fall through to the sign-in window.
             if let (Some(ws), None) = (&given_ws, &account_id) {
                 if let Some(creds) = reuse_slack_session(&state, ws).await {
-                    let who = sl::whoami(&creds).await?;
-                    let signed = SignedIn {
-                        kind: ServiceKind::Slack,
-                        server: who.url,
-                        user_id: who.user_id,
-                        username: who.username,
-                        name: who.team,
-                        team_id: Some(who.team_id),
-                    };
-                    return Ok(vec![save_sign_in(&state, signed, &creds.to_json(), None)?]);
+                    match sl::whoami(&creds, Some(ws)).await {
+                        Ok(who) => {
+                            let signed = SignedIn {
+                                kind: ServiceKind::Slack,
+                                server: who.url,
+                                user_id: who.user_id,
+                                username: who.username,
+                                name: who.team,
+                                team_id: Some(who.team_id),
+                            };
+                            return Ok(vec![save_sign_in(&state, signed, &creds.to_json(), None)?]);
+                        }
+                        Err(e) => tracing::warn!("reusing the Slack session for {ws} failed ({e}): opening the sign-in window"),
+                    }
                 }
             }
             // Always Slack's general page (email, Google, Apple, workspace list). A workspace's own
@@ -505,21 +534,29 @@ pub async fn slack_sign_in(
             let cookies_at: tauri::Url = sl::CLIENT_URL.parse().map_err(err)?;
             let window = login::open(&app, "Sign in to Slack", &start, Some(sl::SIGNIN_SCRIPT))?;
             let mut tick = 0u32;
+            // Tokens read from a workspace page that Slack refused: not tried again.
+            let refused = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<String>::new()));
             login::poll(&app, window, |w| {
                 tick += 1;
-                let (given_ws, cookies_at) = (given_ws.clone(), cookies_at.clone());
+                let (given_ws, cookies_at, refused) = (given_ws.clone(), cookies_at.clone(), refused.clone());
                 async move {
                     let d = login::cookie(&w, &cookies_at, sl::COOKIE_D)?;
+                    // The whole Slack session (d-s, x, b, lc...), sent like the browser does:
+                    // some workspaces refuse `d` alone with an empty HTTP 403.
+                    let jar = login::all_cookies(&w, &cookies_at);
+                    let creds = |token: &str| sl::Credentials::new(token, &d).with_cookies(&jar);
                     // Every workspace, once the Slack client has started in the window.
                     if let Some(raw) = login::cookie(&w, &cookies_at, sl::TEAMS_COOKIE) {
-                        let all: Vec<_> = sl::parse_teams(&raw).iter().map(|t| sl::Credentials::new(&t.token, &d)).collect();
+                        let all: Vec<_> = sl::parse_teams(&raw).iter().map(|t| (creds(&t.token), Some(t.url.clone()))).collect();
                         if !all.is_empty() {
                             return Some(all);
                         }
                     }
                     // Faster: as soon as the login is done, read the token of every workspace seen
                     // (typed, the page the window is on, the list after an email sign-in) instead
-                    // of waiting for the full client. Every ~2 s.
+                    // of waiting for the full client. Every ~2 s. Such a token is checked first:
+                    // a page can hold one Slack refuses (HTTP 403), and then the window stays open
+                    // until the Slack client lists every workspace with its own token (above).
                     if tick % 3 != 0 {
                         return None;
                     }
@@ -532,10 +569,18 @@ pub async fn slack_sign_in(
                     candidates.dedup();
                     let mut found = Vec::new();
                     for ws in candidates {
-                        if let Some(token) = sl::token_from_cookie(&ws, &d).await {
-                            if !found.iter().any(|c: &sl::Credentials| c.token == token) {
-                                found.push(sl::Credentials::new(&token, &d));
-                            }
+                        let Some(token) = sl::token_from_cookie(&ws, &creds("")).await else { continue };
+                        if found.iter().any(|(c, _): &(sl::Credentials, _)| c.token == token)
+                            || refused.lock().unwrap_or_else(|e| e.into_inner()).contains(&token)
+                        {
+                            continue;
+                        }
+                        let c = creds(&token);
+                        if sl::whoami(&c, Some(&ws)).await.is_ok() {
+                            found.push((c, Some(ws)));
+                        } else {
+                            tracing::warn!("Slack refused the token read from {ws}'s page: waiting for the Slack client in the window");
+                            refused.lock().unwrap_or_else(|e| e.into_inner()).insert(token);
                         }
                     }
                     (!found.is_empty()).then_some(found)
@@ -544,15 +589,15 @@ pub async fn slack_sign_in(
             .await?
         }
     };
+    tracing::info!("Slack sign-in: {} workspace(s) to check", logins.len());
     // On a re-sign-in, only the account asked for is refreshed; no workspaces are added.
-    let wanted_team = match &account_id {
-        Some(id) => state.engine.accounts().into_iter().find(|a| &a.id == id).and_then(|a| a.team_id),
-        None => None,
-    };
+    let refreshed = account_id.as_ref().and_then(|id| state.engine.accounts().into_iter().find(|a| &a.id == id));
+    let wanted_team = refreshed.as_ref().and_then(|a| a.team_id.clone());
     let mut out = Vec::new();
     let mut errors = Vec::new();
-    for creds in logins {
-        let who = match sl::whoami(&creds).await {
+    for (creds, ws) in logins {
+        let ws = ws.or_else(|| refreshed.as_ref().map(|a| a.server_url.clone()));
+        let who = match sl::whoami(&creds, ws.as_deref()).await {
             Ok(w) => w,
             Err(e) => {
                 errors.push(e);
@@ -578,21 +623,22 @@ pub async fn slack_sign_in(
     Ok(out)
 }
 
-/// Tries the `d` cookie of every Slack account already added on workspace `ws`;
+/// Tries the Slack session (cookies) of every Slack account already added on workspace `ws`;
 /// returns that workspace's credentials when one of those sessions is signed in to it.
 async fn reuse_slack_session(state: &AppState, ws: &str) -> Option<agora_slack::Credentials> {
-    let mut cookies: Vec<String> = Vec::new();
+    let mut sessions: Vec<agora_slack::Credentials> = Vec::new();
     for a in state.engine.accounts().into_iter().filter(|a| a.kind == ServiceKind::Slack) {
         let stored = secrets::get(&secrets::account_key(&a.id)).ok().flatten();
         if let Some(c) = stored.as_deref().and_then(agora_slack::Credentials::parse) {
-            if !cookies.contains(&c.cookie) {
-                cookies.push(c.cookie);
+            if !sessions.iter().any(|s| s.cookie == c.cookie) {
+                sessions.push(c);
             }
         }
     }
-    for cookie in cookies {
-        if let Some(token) = agora_slack::token_from_cookie(ws, &cookie).await {
-            return Some(agora_slack::Credentials::new(&token, &cookie));
+    for mut session in sessions {
+        if let Some(token) = agora_slack::token_from_cookie(ws, &session).await {
+            session.token = token;
+            return Some(session);
         }
     }
     None
@@ -730,8 +776,17 @@ pub async fn upload_file(request: tauri::ipc::Request<'_>, state: State<'_, AppS
 /// and positions stay consistent, unlike a CSS zoom.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_zoom(app: AppHandle, scale: f64) -> CmdResult<()> {
-    let w = app.get_webview_window("main").ok_or("no main window")?;
-    w.set_zoom(scale.clamp(0.8, 1.5)).map_err(err)
+    // Android follows the system's font size instead.
+    #[cfg(mobile)]
+    {
+        let _ = (app, scale);
+        Ok(())
+    }
+    #[cfg(desktop)]
+    {
+        let w = app.get_webview_window("main").ok_or("no main window")?;
+        w.set_zoom(scale.clamp(0.8, 1.5)).map_err(err)
+    }
 }
 
 /// Paints the Windows title bar like the app's top edge: `dark` picks the light or dark frame
@@ -744,7 +799,11 @@ pub async fn set_zoom(app: AppHandle, scale: f64) -> CmdResult<()> {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_titlebar(app: AppHandle, dark: bool, caption: String, text: String, border: String) -> CmdResult<()> {
     let _ = text;
+    #[cfg(mobile)]
+    let _ = (app, dark, caption, border);
+    #[cfg(desktop)]
     let w = app.get_webview_window("main").ok_or("no main window")?;
+    #[cfg(desktop)]
     w.set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light })).map_err(err)?;
     #[cfg(windows)]
     {
@@ -785,6 +844,14 @@ pub const HIDDEN_ARG: &str = "--hidden";
 
 /// Keeps the system's login item in step with the "Start at login" setting.
 pub fn apply_autostart(app: &AppHandle, wanted: bool) {
+    #[cfg(desktop)]
+    apply_autostart_desktop(app, wanted);
+    #[cfg(mobile)]
+    let _ = (app, wanted);
+}
+
+#[cfg(desktop)]
+fn apply_autostart_desktop(app: &AppHandle, wanted: bool) {
     use tauri_plugin_autostart::ManagerExt;
     let launcher = app.autolaunch();
     let on = launcher.is_enabled().unwrap_or(false);
@@ -800,6 +867,12 @@ pub fn apply_autostart(app: &AppHandle, wanted: bool) {
 
 /// Hands a link or a file to the system, which opens it with the default app.
 fn open_with_system(target: &std::ffi::OsStr) -> CmdResult<()> {
+    // Android: links and files go through the system's intents (step 6 of MOBILE.md).
+    #[cfg(target_os = "android")]
+    {
+        let _ = target;
+        return Err("Opening links and files is not available on Android yet".into());
+    }
     #[cfg(windows)]
     let mut cmd = {
         let mut c = std::process::Command::new("rundll32");
@@ -808,9 +881,11 @@ fn open_with_system(target: &std::ffi::OsStr) -> CmdResult<()> {
     };
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
     let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(not(target_os = "android"))]
     cmd.arg(target).spawn().map_err(err)?;
+    #[cfg(not(target_os = "android"))]
     Ok(())
 }
 

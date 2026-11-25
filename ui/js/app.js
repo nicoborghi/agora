@@ -56,6 +56,16 @@ const isOpen = (a, c) => S.open && S.open.a === a && S.open.c === c;
 const railAccount = () => (['all', 'home', 'bookmarks', 'todo'].includes(S.rail) ? null : S.rail);
 // Pages of their own, across every workspace: they replace the conversation list.
 const isPage = (id) => id === 'home' || id === 'bookmarks' || id === 'todo';
+const isSaved = (id) => id === 'bookmarks' || id === 'todo';
+// The to-do page or the bookmarks, whichever was shown last (they share one button).
+const savedPage = () => (load('savedPage') === 'bookmarks' ? 'bookmarks' : 'todo');
+/** The switch between the two pages behind that button, with how many each holds. */
+function savedTabs() {
+  const open = openTodos();
+  const n = S.bookmarkList?.length || 0;
+  return `<div class="seg big home-tabs">${[['todo', `To-do${open ? ` <span>${open}</span>` : ''}`], ['bookmarks', `Bookmarks${n ? ` <span>${n}</span>` : ''}`]]
+    .map(([k, l]) => `<button class="${S.rail === k ? 'on' : ''}" data-rail="${k}">${l}</button>`).join('')}</div>`;
+}
 const KIND_NAMES = { slack: 'Slack', mattermost: 'Mattermost', rocketchat: 'Rocket.Chat', demo: 'Demo' };
 export const kindName = (k) => KIND_NAMES[k] || k;
 
@@ -91,6 +101,7 @@ async function init() {
   b.channels.forEach((c) => S.channels.set(key(c.account_id, c.id), c));
   S.rail = load('rail') || 'home';
   if (railAccount() && !account(S.rail)) S.rail = 'home';
+  if (S.rail === 'all' && S.settings.show_all_conversations === false) S.rail = 'home';
   applyTheme();
   await listen('agora', onEvent);
   S.drafts = load('drafts') || {};
@@ -322,7 +333,7 @@ RENDER.rail = function renderRail() {
   const inSettings = settingsOpen();
   const on = (id) => (!inSettings && S.rail === id ? 'active' : '');
   let html = `<div class="rail-item home ${on('home')}" data-id="home" title="Home (Ctrl+0)">${icon('grid')}<span class="num">0</span></div>
-    <div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div><div class="rail-sep"></div>`;
+    ${S.settings?.show_all_conversations !== false ? `<div class="rail-item all ${on('all')}" data-id="all" title="All conversations">${icon('chats')}</div>` : ''}<div class="rail-sep"></div>`;
   enabledAccounts().forEach((a, i) => {
     const st = S.conn[a.id];
     const cls = st?.state === 'auth_expired' ? 'expired' : st?.state === 'offline' ? 'offline' : '';
@@ -332,10 +343,11 @@ RENDER.rail = function renderRail() {
       style="--c:${esc(a.color)}" title="${esc(title)}">${accountIcon(a)}
       ${unread.has(a.id) ? '<span class="dot"></span>' : ''}${i < 9 ? `<span class="num">${i + 1}</span>` : ''}</div>`;
   });
-  // Bookmarks span every workspace, so they sit below them.
-  html += `<div class="rail-sep"></div><div class="rail-item all bookmarks ${on('bookmarks')}" data-id="bookmarks" title="Bookmarks">${icon('bookmark')}</div>`;
+  // To-do and bookmarks span every workspace, so they sit below them: one button for both
+  // pages, reopening the one shown last.
   const open = openTodos();
-  html += `<div class="rail-item all todo ${on('todo')}" data-id="todo" title="To-do${open ? ` - ${open} open` : ''}">${icon('todo')}
+  html += `<div class="rail-sep"></div><div class="rail-item all todo ${isSaved(S.rail) && !inSettings ? 'active' : ''}" data-id="${savedPage()}"
+    title="To-do and bookmarks${open ? ` - ${open} open` : ''}">${icon('todo')}
     ${open ? `<span class="count">${open > 99 ? '99+' : open}</span>` : ''}</div>`;
   const focus = !!S.settings?.notifications?.focus;
   html += `<div class="rail-spacer"></div><div class="rail-item gear focus ${focus ? 'on' : ''}" data-act="focus"
@@ -420,6 +432,7 @@ function selectRail(id) {
   if (id !== S.rail && S.panel) { S.panel = null; schedule('panel', 'header'); }
   S.rail = id;
   save('rail', id);
+  if (isSaved(id)) save('savedPage', id);
   if (isPage(id)) closeChannel();
   // Messages may have changed since the list was loaded.
   if (id === 'todo') loadTodos();
@@ -1005,7 +1018,7 @@ function renderBookmarks() {
   }).join('');
   $('#home').innerHTML = `<div class="home-head"><h1>Bookmarks</h1>
       <p class="muted">${list.length ? `${list.length} saved ${list.length === 1 ? 'message' : 'messages'}, kept in Agora only.`
-        : 'Bookmark a message with its bookmark button to find it here, whatever the workspace.'}</p></div>
+        : 'Bookmark a message with its bookmark button to find it here, whatever the workspace.'}</p></div>${savedTabs()}
     <div class="bm-list">${items}</div>`;
 }
 
@@ -1200,7 +1213,7 @@ function renderTodos() {
   const focused = document.activeElement?.closest?.('#home .todo-item [data-field], #home [data-new-todo]');
   const refocus = focused && { id: focused.closest('.todo-item')?.dataset.id, field: focused.dataset.field,
     value: focused.value, at: focused.type === 'text' ? focused.selectionStart : null };
-  $('#home').innerHTML = `<div class="home-head"><h1>To-do</h1><p class="muted">${counts}</p></div>${bar}${composer}
+  $('#home').innerHTML = `<div class="home-head"><h1>To-do</h1><p class="muted">${counts}</p></div>${savedTabs()}${bar}${composer}
     <datalist id="todo-projects">${projects.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
     <div class="bm-list todo-list">${items}${empty}</div>`;
   if (refocus) {

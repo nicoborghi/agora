@@ -265,6 +265,8 @@ const VIEWS = {
     <h3>Font</h3>
     <div class="choices">${FONTS.map(([v, l, stack]) => choice('font', v, l,
       `<div class="font-preview" style="font-family:${esc(stack)}"><b>Aa Bb 0123</b><br>The draft is ready for review.</div>`)).join('')}</div>
+    <h3>Left bar</h3>
+    ${opt('All conversations button', 'Every conversation of every workspace in one sidebar. Ctrl+F opens it even when the button is hidden.', toggle('show_all_conversations'))}
     ${opt('Link previews', 'Title, description and image under messages with links, when the service provides them.', toggle('link_previews'),
       `<div class="example"><div class="link-card" style="margin:0"><span class="t" style="color:var(--accent)">Title of the linked page</span>
        <div class="d">Short description supplied by the service.</div><div class="mock-shot" aria-hidden="true"><i></i><b></b><b></b></div></div></div>`)}`;
@@ -483,7 +485,7 @@ function bind(ov) {
       if (t.dataset.path === 'sidebar_width') resetSidebarWidth();
       if (['theme', 'accent', 'sidebar_size', 'sidebar_width', 'font'].includes(t.dataset.path)) applyTheme();
       if (t.type === 'radio') render();
-      if (t.dataset.path === 'link_previews') refreshAll();
+      if (t.dataset.path === 'link_previews' || t.dataset.path === 'show_all_conversations') refreshAll();
       // Hear the new volume (or sound) right away.
       if (t.dataset.path === 'notifications.volume' || t.dataset.path === 'notifications.sound') playSound(S.settings.notifications.sound);
       persist();

@@ -1,0 +1,10 @@
+{
+  "identifier": "app.agora.mobile",
+  "version": "0.1.0",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "android": {
+      "minSdkVersion": 29
+    }
+  }
+}

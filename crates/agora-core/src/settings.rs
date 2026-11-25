@@ -30,6 +30,8 @@ pub struct Settings {
     pub sidebar_width: String,
     /// Interface font the UI offers ("system" = the default, Lato; "segoe" = Segoe UI).
     pub font: String,
+    /// The "All conversations" button in the left bar (Ctrl+F still opens that view).
+    pub show_all_conversations: bool,
     pub link_previews: bool,
     pub image_cache_mb: u64,
     pub autostart: bool,
@@ -57,6 +59,7 @@ impl Default for Settings {
             sidebar_size: "normal".into(),
             sidebar_width: "compact".into(),
             font: "system".into(),
+            show_all_conversations: true,
             link_previews: true,
             image_cache_mb: 1024,
             autostart: false,

@@ -25,6 +25,15 @@ pub fn open(app: &AppHandle, title: &str, start: &Url, script: Option<&str>) -> 
         .inner_size(520.0, 720.0)
         .center()
         .incognito(true)
+        // Web pages only: no `slack://` or other app links, which would start the service's
+        // desktop app instead of finishing the sign-in here.
+        .on_navigation(|url| {
+            let web = matches!(url.scheme(), "https" | "http" | "about" | "data" | "blob");
+            if !web {
+                tracing::info!("sign-in window: blocked a {}: link", url.scheme());
+            }
+            web
+        })
         .on_page_load(move |w, p| {
             let t = match p.event() {
                 PageLoadEvent::Started => format!("{base} (loading...)"),
@@ -67,6 +76,14 @@ where
 pub fn cookie(window: &WebviewWindow, url: &Url, name: &str) -> Option<String> {
     let cookies = window.cookies_for_url(url.clone()).map_err(|e| tracing::debug!("cookies not readable yet: {e}")).ok()?;
     cookies.iter().find(|c| c.name() == name && !c.value().is_empty()).map(|c| c.value().to_string())
+}
+
+/// Every non-empty cookie visible at `url`, as (name, value).
+pub fn all_cookies(window: &WebviewWindow, url: &Url) -> Vec<(String, String)> {
+    window
+        .cookies_for_url(url.clone())
+        .map(|cs| cs.iter().filter(|c| !c.value().is_empty()).map(|c| (c.name().to_string(), c.value().to_string())).collect())
+        .unwrap_or_default()
 }
 
 /// Opens `start` and waits until every cookie of one of `sets` (tried in order) is set

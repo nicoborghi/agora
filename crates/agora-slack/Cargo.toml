@@ -14,3 +14,12 @@ tracing.workspace = true
 reqwest.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+
+# TLS: the system's on desktop, rustls on Android (see the workspace Cargo.toml).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { workspace = true, features = ["native-tls"] }
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { workspace = true, features = ["rustls-tls"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
